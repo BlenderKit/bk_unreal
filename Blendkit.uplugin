@@ -1,0 +1,28 @@
+{
+    "FileVersion": 3,
+    "Version": 1,
+    "VersionName": "0.1",
+    "FriendlyName": "Blendkit",
+    "Description": "Asset search, download and drag&drop from Blendkit directly inside Unreal Engine.",
+    "Category": "Content",
+    "CreatedBy": "Blender Kit s.r.o.",
+    "CreatedByURL": "https://www.blendkit.com",
+    "DocsURL": "https://github.com/BlenderKit/bk_unreal",
+    "MarketplaceURL": "",
+    "SupportURL": "https://github.com/BlenderKit/bk_unreal/issues",
+    "EngineVersion": "5.6.0",
+    "CanContainContent": true,
+    "IsBetaVersion": true,
+    "Installed": false,
+    "Modules": [],
+    "Plugins": [
+        {
+            "Name": "PythonScriptPlugin",
+            "Enabled": true
+        },
+        {
+            "Name": "EditorScriptingUtilities",
+            "Enabled": true
+        }
+    ]
+}

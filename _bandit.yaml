@@ -1,0 +1,19 @@
+include:
+  - "**/*.py"
+
+exclude_dirs:
+  - ".venv"
+  - "__pycache__"
+  - "out"
+  - "client"
+  - "_debug"
+  - "tests"
+  - "Content/Python/bk_unreal/lib"        # vendored third-party (qtpy, requests, packaging)
+  - "Content/Python/bk_unreal/bk_proxor"  # git submodule — scanned in its own repo
+  - "bk_client"                            # git submodule (Go client) — scanned in its own repo
+
+skips:
+  - "B101" # assert_used — used in tests (excluded above)
+  - "B310" # urllib.urlopen — targets are hard-coded Blendkit https URLs + loopback client
+  - "B404" # import subprocess — required to spawn the Go client
+  - "B603" # subprocess without shell — args are constructed, never shell-interpolated

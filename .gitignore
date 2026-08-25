@@ -1,0 +1,34 @@
+__pycache__
+out
+client
+.mypy_cache
+.venv
+.pdm-python
+.ruff_cache
+.pytest_cache
+
+# vendored Qt/requests (populated by `python dev.py vendor`)
+Content/Python/bk_unreal/lib/
+
+# generated version stamp (written by `python dev.py build`)
+Content/Python/bk_unreal/_build_version.py
+
+# debug env variables
+.env
+
+# unreal / editor cruft that can appear when junctioned into a project
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+
+# debug and backup folders
+_debug/
+_bck/
+
+.DS_Store
+
+
+# ai garbage
+.github/instructions/
+.github/copilot-instructions.md

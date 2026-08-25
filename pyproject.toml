@@ -1,0 +1,88 @@
+[project]
+name = "bk_unreal"
+description = "Blendkit for Unreal Engine — asset search, download and drag&drop inside the UE editor."
+requires-python = ">=3.11,<3.13"
+dynamic = ["version"]
+dependencies = [
+    "requests>=2.18.4",
+    "types-requests>=2.31.0.5",
+]
+
+[tool.pdm]
+distribution = false
+
+[tool.pdm.version]
+source = "file"
+path = "Content/Python/bk_unreal/_version.py"
+
+[dependency-groups]
+dev = [
+    # qtpy is also vendored into Content/Python/bk_unreal/lib/ at build time via
+    # `python dev.py vendor`. Kept here so IDEs and the local venv type-check it.
+    "qtpy>=2.4.3",
+    "PySide6>=6.6.0",
+    "bandit==1.9.4",
+    "ruff==0.15.20",
+    "pydoclint==0.9.1",
+    "pre-commit>=4.6.0",
+    "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["Content/Python"]
+testpaths = ["tests"]
+
+[tool.ruff]
+# UE 5.6 ships Python 3.11; keep py39 as the floor so modern-typing rules enforce
+# `from __future__ import annotations` (mirrors bk_maya so the code stays portable).
+target-version = "py39"
+line-length = 120
+include = ["**/*.py"]
+extend-exclude = [
+    "Content/Python/bk_unreal/lib",        # vendored third-party packages
+    "Content/Python/bk_unreal/bk_proxor",  # git submodule, lints in its own repo
+    "bk_client",                            # git submodule (Go client)
+    "client",                               # bundled client binaries
+    "out",
+    "_debug",
+    "__pycache__",
+    ".venv",
+    "*.pyi",
+]
+
+[tool.ruff.format]
+line-ending = "auto"
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "C90", "I", "N", "D", "UP", "S1", "S2", "S3", "S5", "BLE", "FBT",
+    "B", "A", "C4", "COM", "DTZ", "T10", "FA", "ISC", "ICN", "LOG", "G", "INP", "PIE", "T20", "Q", "RSE", "RET", "SLF",
+    "SLOT", "SIM", "TID", "TC001", "TC004", "TC005", "TC010",
+    "INT", "ARG", "FIX", "ERA", "PL", "TRY", "FLY", "PERF", "RUF"
+]
+ignore = [
+    "E501", "D100", "D101", "D102", "D103", "D104", "D105", "D107", "D205", "D209", "D415",
+    "COM812", "ERA001",
+    "BLE001", "S110", "S112", "SIM105", "TRY003", "TRY300", "TRY400", "TRY401", "PERF203", "S310",
+    "N813", "N803", "N806", "N802", "FBT001", "FBT002", "FBT003", "PLR0402",
+    "C901", "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR2004", "PLC0415",
+    "RET504", "SLF001", "ARG001", "ARG002", "ARG005", "TID252",
+    "RUF001", "RUF002", "RUF003", "PLW0602", "PLW0603",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["INP001", "S101", "PLR2004", "E402", "D"]
+"Content/Python/init_unreal.py" = ["T201", "INP001"]
+"Content/Python/bk_unreal/unreal_plugin.py" = ["T201"]
+"dev.py" = ["T201", "PLW1510", "PLR1722", "INP001"]
+".vscode/unreal_plugin.py" = ["T201", "PLW1510", "INP001"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.pydoclint]
+style = "google"
+arg-type-hints-in-docstring = false
+check-return-types = false
+ignore-private-args = true
+ignore-underscore-args = true
+exclude = '\.venv|Content[\\/]Python[\\/]bk_unreal[\\/]lib|Content[\\/]Python[\\/]bk_unreal[\\/]bk_proxor|bk_client|^out|^client|^_debug|^\.vscode'

@@ -1,0 +1,137 @@
+{
+    "version": "0.2.0",
+    "inputs": [
+        {
+            "id": "uproject",
+            "type": "promptString",
+            "description": "Path to the Unreal .uproject file (or its folder) to use for live dev.",
+            "default": ""
+        }
+    ],
+    "configurations": [
+        {
+            "name": "Run Project Setup",
+            "type": "node",
+            "request": "launch",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "windows": {
+                "runtimeExecutable": "${workspaceFolder}/.vscode/pdm_setup_project.bat"
+            },
+            "linux": {
+                "runtimeExecutable": "${workspaceFolder}/.vscode/pdm_setup_project.sh"
+            },
+            "osx": {
+                "runtimeExecutable": "${workspaceFolder}/.vscode/pdm_setup_project.sh"
+            }
+        },
+        {
+            "name": "Register Plugin (junction)",
+            "type": "debugpy",
+            "request": "launch",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "program": "${workspaceFolder}/.vscode/unreal_plugin.py",
+            "args": ["junction", "--project", "${input:uproject}"],
+            "windows": { "python": "${workspaceFolder}/.venv/Scripts/python.exe" },
+            "linux": { "python": "${workspaceFolder}/.venv/bin/python" },
+            "osx": { "python": "${workspaceFolder}/.venv/bin/python" }
+        },
+        {
+            "name": "Unregister Plugin (remove junction)",
+            "type": "debugpy",
+            "request": "launch",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "program": "${workspaceFolder}/.vscode/unreal_plugin.py",
+            "args": ["remove", "--project", "${input:uproject}"],
+            "windows": { "python": "${workspaceFolder}/.venv/Scripts/python.exe" },
+            "linux": { "python": "${workspaceFolder}/.venv/bin/python" },
+            "osx": { "python": "${workspaceFolder}/.venv/bin/python" }
+        },
+        {
+            "name": "Register Python Path (DefaultEngine.ini)",
+            "type": "debugpy",
+            "request": "launch",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "program": "${workspaceFolder}/.vscode/unreal_plugin.py",
+            "args": ["pythonpath", "--project", "${input:uproject}"],
+            "windows": { "python": "${workspaceFolder}/.venv/Scripts/python.exe" },
+            "linux": { "python": "${workspaceFolder}/.venv/bin/python" },
+            "osx": { "python": "${workspaceFolder}/.venv/bin/python" }
+        },
+        {
+            "name": "Unregister Python Path",
+            "type": "debugpy",
+            "request": "launch",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "program": "${workspaceFolder}/.vscode/unreal_plugin.py",
+            "args": ["unpythonpath", "--project", "${input:uproject}"],
+            "windows": { "python": "${workspaceFolder}/.venv/Scripts/python.exe" },
+            "linux": { "python": "${workspaceFolder}/.venv/bin/python" },
+            "osx": { "python": "${workspaceFolder}/.venv/bin/python" }
+        },
+        {
+            "name": "Build Plugin (zip)",
+            "type": "debugpy",
+            "request": "launch",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "program": "${workspaceFolder}/dev.py",
+            "args": ["build"],
+            "windows": { "python": "${workspaceFolder}/.venv/Scripts/python.exe" },
+            "linux": { "python": "${workspaceFolder}/.venv/bin/python" },
+            "osx": { "python": "${workspaceFolder}/.venv/bin/python" }
+        },
+        {
+            "name": "Vendor deps",
+            "type": "debugpy",
+            "request": "launch",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "program": "${workspaceFolder}/dev.py",
+            "args": ["vendor"],
+            "windows": { "python": "${workspaceFolder}/.venv/Scripts/python.exe" },
+            "linux": { "python": "${workspaceFolder}/.venv/bin/python" },
+            "osx": { "python": "${workspaceFolder}/.venv/bin/python" }
+        },
+        {
+            "name": "[RUFF] Check All",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "ruff",
+            "args": ["check", "."],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "windows": { "python": "${workspaceFolder}/.venv/Scripts/python.exe" },
+            "linux": { "python": "${workspaceFolder}/.venv/bin/python" },
+            "osx": { "python": "${workspaceFolder}/.venv/bin/python" }
+        },
+        {
+            "name": "[RUFF] Fix All",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "ruff",
+            "args": ["format", "."],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "windows": { "python": "${workspaceFolder}/.venv/Scripts/python.exe" },
+            "linux": { "python": "${workspaceFolder}/.venv/bin/python" },
+            "osx": { "python": "${workspaceFolder}/.venv/bin/python" }
+        },
+        {
+            "name": "[BANDIT] Check All",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "bandit",
+            "args": ["-c", "_bandit.yaml", "-ll", "-r", "."],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "windows": { "python": "${workspaceFolder}/.venv/Scripts/python.exe" },
+            "linux": { "python": "${workspaceFolder}/.venv/bin/python" },
+            "osx": { "python": "${workspaceFolder}/.venv/bin/python" }
+        }
+    ]
+}

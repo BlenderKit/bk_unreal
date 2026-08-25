@@ -1,0 +1,8 @@
+[submodule "bk_client"]
+	path = bk_client
+	url = https://github.com/BlenderKit/bk_client.git
+	branch = main
+[submodule "Content/Python/bk_unreal/bk_proxor"]
+	path = Content/Python/bk_unreal/bk_proxor
+	url = https://github.com/BlenderKit/bk_proxor.git
+	branch = main

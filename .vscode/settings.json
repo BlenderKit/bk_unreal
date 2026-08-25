@@ -1,0 +1,74 @@
+{
+    "python.envFile": "${workspaceFolder}/.env",
+    "python.terminal.activateEnvironment": false,
+    "python.terminal.shellIntegration.enabled": false,
+
+    "terminal.integrated.env.windows": {
+        "PATH": "${env:PATH};${workspaceFolder};${workspaceFolder}/.venv/Scripts",
+        "PYTHONPATH": "${env:PYTHONPATH};${workspaceFolder}/Content/Python"
+    },
+    "terminal.integrated.env.linux": {
+        "PATH": "${workspaceFolder}/.venv/bin:${env:PATH}",
+        "PYTHONPATH": "${env:PYTHONPATH}:${workspaceFolder}/Content/Python"
+    },
+    "terminal.integrated.env.osx": {
+        "PATH": "${workspaceFolder}/.venv/bin:${env:PATH}",
+        "PYTHONPATH": "${env:PYTHONPATH}:${workspaceFolder}/Content/Python"
+    },
+
+    "python.autoComplete.extraPaths": [
+        "${workspaceFolder}/Content/Python",
+        "${workspaceFolder}/Content/Python/bk_unreal/lib",
+        "${env:UE_PYTHON_STUBS}"
+    ],
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/Content/Python",
+        "${workspaceFolder}/Content/Python/bk_unreal/lib",
+        "${env:UE_PYTHON_STUBS}"
+    ],
+
+    "python.testing.pytestArgs": [
+        "tests"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true,
+
+    "files.insertFinalNewline": true,
+
+    "ruff.enable": true,
+    "ruff.importStrategy": "fromEnvironment",
+    "ruff.nativeServer": "on",
+    "ruff.lint.enable": true,
+    "ruff.organizeImports": true,
+
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.fixAll.ruff": "explicit",
+            "source.organizeImports.ruff": "explicit"
+        }
+    },
+
+    "cSpell.words": [
+        "assetbar",
+        "bkit",
+        "blenderkit",
+        "blendkit",
+        "Blendkit",
+        "pyproject",
+        "qtpy",
+        "Slate",
+        "toolmenus",
+        "uasset",
+        "umap",
+        "uplugin",
+        "uproject"
+    ],
+
+    "github.copilot.chat.codeGeneration.useInstructionFiles": true,
+    "chat.instructionsFilesLocations": {
+        ".github/instructions": true
+    },
+    "iis.configDir": ""
+}
