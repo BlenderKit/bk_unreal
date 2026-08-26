@@ -60,7 +60,17 @@ def _make_link(src: str, dst: str) -> None:
         return
     if sys.platform == "win32":
         # Directory junction — no admin rights required, unlike symlinks.
-        subprocess.run(["cmd", "/c", "mklink", "/J", dst, src], check=True)
+        result = subprocess.run(["cmd", "/c", "mklink", "/J", dst, src], capture_output=True, text=True)
+        if result.returncode != 0:
+            msg = (result.stderr or result.stdout or "").strip()
+            if "NTFS" in msg:
+                raise SystemExit(
+                    f"error: cannot create a junction at {dst}: the project volume is not NTFS "
+                    "(junctions/symlinks require NTFS).\n"
+                    "       Use the 'pythonpath' command instead, or move the Unreal project onto an "
+                    "NTFS drive."
+                )
+            raise SystemExit(f"error: mklink failed: {msg or result.returncode}")
     else:
         os.symlink(src, dst)
     print(f"  Linked {dst} -> {src}")

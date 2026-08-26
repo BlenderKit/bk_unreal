@@ -33,13 +33,12 @@ import sys
 import threading
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 import uuid
 from collections.abc import Callable
 from typing import Any
 
-from . import global_vars
+from . import global_vars, search
 from . import prefs as _prefs_mod
 
 log = logging.getLogger(__name__)
@@ -90,6 +89,16 @@ _use_inplace_client: bool = False
 # task-id → callback registry, drained by the report poller.
 _task_callbacks: dict[str, Callable[[dict[str, Any]], None]] = {}
 _callbacks_lock = threading.Lock()
+
+# Global thumbnail sink: (asset_base_id, image_path). Thumbnails arrive as their
+# own tasks, so they are not keyed by the requesting search's task id.
+_thumbnail_callback: Callable[[str, str], None] | None = None
+
+# asset_base_id → best downloaded thumbnail path seen so far. Lets a tile that
+# was created after the client already reported (and dropped) its
+# thumbnail_download task still pick the image up. "full" thumbs win over "small".
+_thumbnail_paths: dict[str, str] = {}
+_thumbnail_paths_lock = threading.Lock()
 
 _poller_thread: threading.Thread | None = None
 _poller_stop = threading.Event()
@@ -288,6 +297,25 @@ def _minimal_report_data() -> dict[str, Any]:
     }
 
 
+def _prefs_block() -> dict[str, Any]:
+    """The ``PREFS`` block the Go client embeds in every search/download task."""
+    return {
+        "api_key": _prefs_mod.prefs.api_key,
+        "api_key_refresh": "",
+        "api_key_timeout": 0,
+        "scene_id": "",
+        "app_id": _app_id,
+        "unpack_files": False,
+        "create_asset_library": False,
+        "resolution": _prefs_mod.prefs.resolution,
+        "project_subdir": "",
+        "global_dir": "",
+        "binary_path": "",
+        "addon_dir": "",
+        "addon_module_name": "bk_unreal",
+    }
+
+
 # ── Process launch ───────────────────────────────────────────────────────────
 
 
@@ -405,16 +433,67 @@ def register_task_callback(task_id: str, callback: Callable[[dict[str, Any]], No
         _task_callbacks[task_id] = callback
 
 
+def register_thumbnail_callback(callback: Callable[[str, str], None] | None) -> None:
+    """Register a global ``(asset_base_id, image_path)`` thumbnail sink.
+
+    Thumbnails arrive as their own ``thumbnail_download`` tasks (with a task id
+    distinct from the search that requested them), so they are routed here
+    rather than through the per-task callback registry.
+    """
+    global _thumbnail_callback
+    _thumbnail_callback = callback
+
+
+def get_thumbnail_path(asset_base_id: str) -> str:
+    """Return the best downloaded thumbnail path seen for *asset_base_id*, or ''.
+
+    Covers the race where the client reported (and then dropped) a finished
+    ``thumbnail_download`` task before the asset's tile existed to receive it.
+    """
+    with _thumbnail_paths_lock:
+        return _thumbnail_paths.get(asset_base_id, "")
+
+
+def clear_thumbnail_cache() -> None:
+    """Forget cached thumbnail paths (call when starting a fresh search)."""
+    with _thumbnail_paths_lock:
+        _thumbnail_paths.clear()
+
+
 def _drain_report(report: list[dict[str, Any]]) -> None:
     with _callbacks_lock:
         callbacks = dict(_task_callbacks)
     for task in report:
+        task_type = task.get("task_type", "")
+
+        if task_type == "thumbnail_download":
+            if task.get("status") != "finished":
+                continue
+            data = task.get("data") or {}
+            base_id = str(data.get("assetBaseId") or "")
+            path = str(data.get("image_path") or "")
+            if not base_id or not path:
+                continue
+            is_full = data.get("thumbnail_type") == "full"
+            with _thumbnail_paths_lock:
+                # "full" thumbs (the larger Middle image) win; otherwise keep
+                # the first path so we never blank an already-shown image.
+                if is_full or base_id not in _thumbnail_paths:
+                    _thumbnail_paths[base_id] = path
+            cb = _thumbnail_callback
+            if cb is not None:
+                try:
+                    cb(base_id, path)
+                except Exception as exc:
+                    log.error("Thumbnail callback failed for %s: %s", base_id, exc)
+            continue
+
         task_id = task.get("task_id", "")
-        cb = callbacks.get(task_id)
-        if cb is None:
+        cb_task = callbacks.get(task_id)
+        if cb_task is None:
             continue
         try:
-            cb(task)
+            cb_task(task)
         except Exception as exc:
             log.error("Task callback for %s failed: %s", task_id, exc)
         if task.get("status") in ("finished", "error"):
@@ -454,34 +533,49 @@ def _start_poller() -> None:
 def asset_search(query: dict[str, Any], tempdir: str, callback: Callable[[dict[str, Any]], None]) -> str | None:
     """POST a search to the client and route results to *callback*.
 
-    Returns the generated task id, or ``None`` if no client is available.
+    Returns the client-assigned task id, or ``None`` if no client is available.
     """
     port = ensure_running()
     if port is None:
         log.error("No Blendkit client available for search.")
         return None
 
-    task_id = str(uuid.uuid4())
-    register_task_callback(task_id, callback)
+    asset_type = str(query.get("asset_type", "model"))
+    page_size = int(query.get("page_size", 24))
+    urlquery = search.build_search_url(query, next_url=str(query.get("next", "") or ""))
 
     body = {
-        "app_id": _app_id,
-        "api_key": _prefs_mod.prefs.api_key,
+        "PREFS": _prefs_block(),
         "addon_version": ADDON_VERSION,
         "platform_version": platform.platform(),
-        "urlquery": urllib.parse.urlencode(query),
-        "tempdir": tempdir,
-        "task_id": task_id,
+        "api_key": _prefs_mod.prefs.api_key,
+        "app_id": _app_id,
+        "asset_type": asset_type,
+        "blender_version": "0.0.0",  # client just echoes this back
         "get_next": False,
-        "scene_uuid": "",
+        "next": "",
+        "page_size": page_size,
+        "scene_uuid": str(uuid.uuid4()),
+        "tempdir": tempdir,
+        "urlquery": urlquery,
+        "is_validator": False,
+        "history_id": "",
     }
+    log.info("asset_search: type=%s query=%r → port %s", asset_type, query.get("query", ""), port)
     try:
-        _http_request("POST", f"{get_base_url()}/blender/asset_search", body=body)
+        resp = _http_request("POST", f"{get_base_url()}/blender/asset_search", body=body)
     except Exception as exc:
         log.error("asset_search POST failed: %s", exc)
-        with _callbacks_lock:
-            _task_callbacks.pop(task_id, None)
         return None
+
+    if not isinstance(resp, dict) or "task_id" not in resp:
+        log.error("Unexpected /asset_search response: %r", resp)
+        return None
+
+    task_id = str(resp["task_id"])
+    log.info("asset_search accepted, task_id=%s", task_id)
+    register_task_callback(task_id, callback)
+    _start_poller()
     return task_id
 
 

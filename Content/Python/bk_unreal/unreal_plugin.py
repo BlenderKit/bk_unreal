@@ -32,6 +32,16 @@ def _open_asset_bar_impl() -> None:
     asset_bar.open_asset_bar()
 
 
+def _open_settings_impl() -> None:
+    """Import lazily so a missing Qt vendor dir doesn't break registration."""
+    try:
+        from .ui import settings_dialog
+    except Exception as exc:
+        log.error("Failed to import settings UI: %s", exc)
+        return
+    settings_dialog.open_settings()
+
+
 def _register_menu() -> None:
     import unreal
 
@@ -64,6 +74,19 @@ def _register_menu() -> None:
         "from bk_unreal import unreal_plugin as _p; _p._open_asset_bar_impl()",
     )
     bk_menu.add_menu_entry("Actions", entry)
+
+    settings_entry = unreal.ToolMenuEntry(
+        name="Blendkit.OpenSettings",
+        type=unreal.MultiBlockType.MENU_ENTRY,
+    )
+    settings_entry.set_label("Settings")
+    settings_entry.set_tool_tip("Edit Blendkit preferences")
+    settings_entry.set_string_command(
+        unreal.ToolMenuStringCommandType.PYTHON,
+        "",
+        "from bk_unreal import unreal_plugin as _p; _p._open_settings_impl()",
+    )
+    bk_menu.add_menu_entry("Actions", settings_entry)
     menus.refresh_all_widgets()
 
 

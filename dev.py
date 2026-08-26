@@ -16,6 +16,8 @@ Commands
                               requests) into Content/Python/bk_unreal/lib.
     python dev.py build       Vendor + build the local client + write a
                               version stamp + zip the plugin into out/.
+    python dev.py client      Build only the local client binaries (add
+                              ``--update`` to pull the latest submodule first).
     python dev.py stamp       Write Content/Python/bk_unreal/_build_version.py.
 
 The Go ``blendkit-client`` lives in its own repo, embedded here as the
@@ -155,6 +157,21 @@ def build_client() -> None:
     _extract_client_bundles(client_dir)
 
 
+def update_client_submodule() -> None:
+    """Fast-forward the bk_client submodule to the latest remote commit."""
+    if not os.path.isdir(os.path.join(CLIENT_SUBMODULE_DIR, ".git")) and not os.path.isfile(
+        os.path.join(CLIENT_SUBMODULE_DIR, ".git")
+    ):
+        print("bk_client submodule not initialised; run `git submodule update --init --recursive` first.")
+        return
+    print("Updating bk_client submodule to latest remote commit ...")
+    subprocess.run(  # nosec B607
+        ["git", "submodule", "update", "--remote", "--recursive", "bk_client"],
+        cwd=REPO_ROOT,
+        check=False,
+    )
+
+
 def _extract_client_bundles(client_dir: str) -> None:
     """Unpack each ``v<ver>/bk_client.zip`` next to itself so the loose binaries
     the runtime looks for exist locally.
@@ -231,6 +248,9 @@ def main() -> None:
     p_build.add_argument("--channel", default=CHANNEL_DEV, choices=[CHANNEL_STABLE, CHANNEL_ALPHA, CHANNEL_DEV])
     p_build.add_argument("--version", default=None)
 
+    p_client = sub.add_parser("client", help="Build only the local client binaries (fast dev loop)")
+    p_client.add_argument("--update", action="store_true", help="Pull the latest bk_client submodule commit first")
+
     p_stamp = sub.add_parser("stamp", help="Write _build_version.py only")
     p_stamp.add_argument("--channel", default=CHANNEL_DEV, choices=[CHANNEL_STABLE, CHANNEL_ALPHA, CHANNEL_DEV])
     p_stamp.add_argument("--version", default=None)
@@ -240,6 +260,10 @@ def main() -> None:
         vendor_packages()
     elif args.command == "build":
         build(args.channel, args.version)
+    elif args.command == "client":
+        if args.update:
+            update_client_submodule()
+        build_client()
     elif args.command == "stamp":
         write_version_stamp(args.channel, args.version)
 

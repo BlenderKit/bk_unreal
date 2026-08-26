@@ -22,6 +22,9 @@ def _default_global_dir() -> str:
     return os.path.join(os.path.expanduser("~"), "blenderkit_data")
 
 
+RESOLUTIONS: tuple[str, ...] = ("512", "1024", "2048", "4096", "8192", "ORIGINAL")
+
+
 class Prefs:
     """Lazily-loaded preferences with the fields client_lib expects."""
 
@@ -29,14 +32,28 @@ class Prefs:
         self._global_dir = _default_global_dir()
         self.ssl_verification: bool = True
         self._api_key: str = os.environ.get("API_KEY", "")
+        self.resolution: str = "ORIGINAL"
+        self.blender_exe: str = ""
+        self.blender_version_cache: dict[str, str] = {}
+        self.bookmarks: set[str] = set()
         self._loaded = False
 
-    # ── Global dir ────────────────────────────────────────────────────────────
+    # ── Global dir ───────────────────────────────────────────
 
     def global_dir_resolved(self) -> str:
         """Absolute, guaranteed-to-exist global data directory."""
+        self._load()
         os.makedirs(self._global_dir, exist_ok=True)
         return self._global_dir
+
+    @property
+    def global_dir(self) -> str:
+        self._load()
+        return self._global_dir
+
+    @global_dir.setter
+    def global_dir(self, value: str) -> None:
+        self._global_dir = os.path.abspath(value) if value else _default_global_dir()
 
     # ── API key ───────────────────────────────────────────────────────────────
 
@@ -54,6 +71,17 @@ class Prefs:
             return
         self._api_key = self._api_key or data.get("api_key", "")
         self.ssl_verification = bool(data.get("ssl_verification", self.ssl_verification))
+        self.resolution = str(data.get("resolution", self.resolution))
+        self.blender_exe = str(data.get("blender_exe", self.blender_exe))
+        cache = data.get("blender_version_cache")
+        if isinstance(cache, dict):
+            self.blender_version_cache = {str(k): str(v) for k, v in cache.items()}
+        marks = data.get("bookmarks")
+        if isinstance(marks, list):
+            self.bookmarks = {str(m) for m in marks}
+        stored_dir = data.get("global_dir", "")
+        if stored_dir:
+            self._global_dir = os.path.abspath(stored_dir)
 
     @property
     def api_key(self) -> str:
@@ -70,7 +98,15 @@ class Prefs:
             os.makedirs(self._global_dir, exist_ok=True)
             with open(self._prefs_file(), "w", encoding="utf-8") as fh:
                 json.dump(
-                    {"api_key": self._api_key, "ssl_verification": self.ssl_verification},
+                    {
+                        "api_key": self._api_key,
+                        "ssl_verification": self.ssl_verification,
+                        "resolution": self.resolution,
+                        "blender_exe": self.blender_exe,
+                        "blender_version_cache": self.blender_version_cache,
+                        "bookmarks": sorted(self.bookmarks),
+                        "global_dir": self._global_dir,
+                    },
                     fh,
                 )
         except OSError:

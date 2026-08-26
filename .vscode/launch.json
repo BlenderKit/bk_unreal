@@ -86,6 +86,30 @@
             "osx": { "python": "${workspaceFolder}/.venv/bin/python" }
         },
         {
+            "name": "Build Client Binaries (latest, local dev)",
+            "type": "debugpy",
+            "request": "launch",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "program": "${workspaceFolder}/dev.py",
+            "args": ["client", "--update"],
+            "windows": { "python": "${workspaceFolder}/.venv/Scripts/python.exe" },
+            "linux": { "python": "${workspaceFolder}/.venv/bin/python" },
+            "osx": { "python": "${workspaceFolder}/.venv/bin/python" }
+        },
+        {
+            "name": "Build Client Binaries (current submodule)",
+            "type": "debugpy",
+            "request": "launch",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "program": "${workspaceFolder}/dev.py",
+            "args": ["client"],
+            "windows": { "python": "${workspaceFolder}/.venv/Scripts/python.exe" },
+            "linux": { "python": "${workspaceFolder}/.venv/bin/python" },
+            "osx": { "python": "${workspaceFolder}/.venv/bin/python" }
+        },
+        {
             "name": "Vendor deps",
             "type": "debugpy",
             "request": "launch",
