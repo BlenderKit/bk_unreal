@@ -122,6 +122,25 @@
             "osx": { "python": "${workspaceFolder}/.venv/bin/python" }
         },
         {
+            "name": "Launch test project",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "program": "C:/Program Files/Epic Games/UE_5.8/Engine/Binaries/Win64/UnrealEditor.exe",
+            "args": ["C:/Users/mikih/unreal_projects/c_58/c_58.uproject"],
+            "console": "externalTerminal",
+            "preLaunchTask": "Build BlendkitViewport (test project, UE 5.8)"
+        },
+        {
+            "name": "Launch test project (skip build)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "program": "C:/Program Files/Epic Games/UE_5.8/Engine/Binaries/Win64/UnrealEditor.exe",
+            "args": ["C:/Users/mikih/unreal_projects/c_58/c_58.uproject"],
+            "console": "externalTerminal"
+        },
+        {
             "name": "[RUFF] Check All",
             "type": "debugpy",
             "request": "launch",

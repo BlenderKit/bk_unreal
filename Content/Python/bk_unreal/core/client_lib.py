@@ -104,6 +104,50 @@ _poller_thread: threading.Thread | None = None
 _poller_stop = threading.Event()
 
 
+class _PrxcRegistry:
+    """Map ``assetBaseId`` -> callback for ``.prxc`` proxor-download notifications.
+
+    Mirrors ``_thumbnail_paths``: if the client already finished the download
+    before the caller registered (the client drops finished tasks after one
+    ``/report`` poll), the cached path is delivered immediately on ``register()``.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._cbs: dict[str, Callable[[str], None]] = {}
+        self._cached: dict[str, str] = {}
+
+    def register(self, asset_base_id: str, cb: Callable[[str], None]) -> None:
+        if not asset_base_id:
+            return
+        with self._lock:
+            path = self._cached.get(asset_base_id)
+            if not (path and os.path.exists(path)):
+                self._cbs[asset_base_id] = cb
+                return
+        try:
+            cb(path)
+        except Exception as exc:
+            log.error("Proxor callback raised on replay for %s: %s", asset_base_id, exc)
+
+    def unregister(self, asset_base_id: str) -> None:
+        with self._lock:
+            self._cbs.pop(asset_base_id, None)
+
+    def deliver(self, asset_base_id: str, path: str) -> Callable[[str], None] | None:
+        with self._lock:
+            self._cached[asset_base_id] = path
+            return self._cbs.pop(asset_base_id, None)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._cbs.clear()
+            self._cached.clear()
+
+
+prxc_registry = _PrxcRegistry()
+
+
 # ── Path helpers ─────────────────────────────────────────────────────────────
 
 
@@ -488,6 +532,23 @@ def _drain_report(report: list[dict[str, Any]]) -> None:
                     log.error("Thumbnail callback failed for %s: %s", base_id, exc)
             continue
 
+        if task_type == "prxc_download":
+            if task.get("status") != "finished":
+                continue
+            data = task.get("data") or {}
+            base_id = str(data.get("assetBaseId") or "")
+            path = str(data.get("file_path") or "")
+            if not (base_id and path):
+                continue
+            cb_prxc = prxc_registry.deliver(base_id, path)
+            if cb_prxc is None:
+                continue
+            try:
+                cb_prxc(path)
+            except Exception as exc:
+                log.error("Proxor callback raised for %s: %s", base_id, exc)
+            continue
+
         task_id = task.get("task_id", "")
         cb_task = callbacks.get(task_id)
         if cb_task is None:
@@ -577,6 +638,41 @@ def asset_search(query: dict[str, Any], tempdir: str, callback: Callable[[dict[s
     register_task_callback(task_id, callback)
     _start_poller()
     return task_id
+
+
+def asset_prxc_download(
+    *,
+    asset_base_id: str,
+    download_url: str,
+    file_path: str,
+    scene_uuid: str = "",
+) -> str:
+    """Schedule a ``.prxc`` proxor download. Returns the task_id immediately.
+
+    Completion arrives on ``/report`` as a ``prxc_download`` task whose
+    ``data`` carries ``assetBaseId`` + ``file_path`` (drained in
+    :func:`_drain_report` and routed through :data:`prxc_registry`).
+    """
+    port = ensure_running()
+    if port is None:
+        raise RuntimeError("No Blendkit client available for proxor download.")
+
+    body = {
+        "PREFS": _prefs_block(),
+        "addon_version": ADDON_VERSION,
+        "platform_version": platform.platform(),
+        "api_key": _prefs_mod.prefs.api_key,
+        "app_id": _app_id,
+        "assetBaseId": asset_base_id,
+        "download_url": download_url,
+        "file_path": file_path,
+        "scene_uuid": scene_uuid or str(uuid.uuid4()),
+    }
+    resp = _http_request("POST", f"{get_base_url()}/blender/asset_prxc_download", body=body)
+    if not isinstance(resp, dict) or "task_id" not in resp:
+        raise RuntimeError(f"Unexpected /asset_prxc_download response: {resp!r}")
+    _start_poller()
+    return str(resp["task_id"])
 
 
 # ── Shutdown ─────────────────────────────────────────────────────────────────

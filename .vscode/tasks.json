@@ -1,0 +1,25 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build BlendkitViewport (test project, UE 5.8)",
+            "type": "shell",
+            "command": "C:\\Program Files\\Epic Games\\UE_5.8\\Engine\\Build\\BatchFiles\\Build.bat",
+            "args": [
+                "c_58Editor",
+                "Win64",
+                "Development",
+                "-Project=C:/Users/mikih/unreal_projects/c_58/c_58.uproject",
+                "-WaitMutex",
+                "-FromMsBuild"
+            ],
+            "problemMatcher": ["$msCompile"],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            },
+            "detail": "Compiles the BlendkitViewport C++ module against the test project (matches 'Launch test project' in launch.json). Close the editor first - fails with 'Unable to build while Live Coding is active' otherwise (use Ctrl+Alt+F11 inside the editor instead for a quick hot-reload)."
+        }
+    ]
+}

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import os
 
-from bk_unreal.core import client_lib
+from bk_unreal.core import client_lib, global_vars
 
 
 def test_api_version_is_minor() -> None:
-    # From CLIENT_VERSION "v1.11" we expect the "/vX.Y" API prefix.
-    assert client_lib._api_version() == "v1.11"
+    # "/vX.Y" prefix is derived from global_vars.CLIENT_VERSION, whatever it
+    # currently is - asserting against a literal would break on every bump.
+    assert client_lib._api_version() == global_vars.CLIENT_VERSION
 
 
 def test_binary_name_platform_suffix() -> None:

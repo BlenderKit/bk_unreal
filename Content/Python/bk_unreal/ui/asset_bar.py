@@ -40,6 +40,7 @@ from qtpy.QtWidgets import (
 from ..core import bookmarks as bk_bookmarks
 from ..core import client_lib
 from ..core import icons as bk_icons
+from ..core import placement as bk_placement
 from ..core import search as bk_search
 from ..core.qt_host import get_qapp, parent_to_editor
 
@@ -48,6 +49,9 @@ log = logging.getLogger(__name__)
 WINDOW_TITLE = "Blendkit"
 THUMB_SIZE = 150
 GRID_SPACING = 6
+# Manhattan-distance (px) the cursor must move past the press point before a
+# tile press turns into a drag-to-place (mirrors bk_maya's AssetTile).
+_DRAG_THRESHOLD = 8
 BADGE_SIZE = 20
 # Watchdog re-probes (ms) for thumbnails the client reported before the tile
 # existed: the finished task is dropped after one report, but the file is on disk.
@@ -168,6 +172,7 @@ class AssetTile(QFrame):
         self._tempdir = tempdir
         self._thumb_path = ""
         self._hovering = False
+        self._press_pos: Any = None
 
         self.setFixedSize(THUMB_SIZE + 8, THUMB_SIZE + 8)
         self.setStyleSheet(
@@ -261,6 +266,24 @@ class AssetTile(QFrame):
         dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dlg.show()
         event.accept()
+
+    def mousePressEvent(self, event) -> None:  # Qt override
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._press_pos = event.globalPos()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # Qt override
+        if self._press_pos is not None and self._thumb_path:
+            moved = event.globalPos() - self._press_pos
+            if moved.manhattanLength() >= _DRAG_THRESHOLD:
+                self._press_pos = None
+                bk_placement.start_drag(self._asset, self._thumb_path)
+                return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # Qt override
+        self._press_pos = None
+        super().mouseReleaseEvent(event)
 
     # ── Thumbnail ───────────────────────────────────────────────────────────
 

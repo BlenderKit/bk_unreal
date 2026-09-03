@@ -13,7 +13,13 @@
     "CanContainContent": true,
     "IsBetaVersion": true,
     "Installed": false,
-    "Modules": [],
+    "Modules": [
+        {
+            "Name": "BlendkitViewport",
+            "Type": "Editor",
+            "LoadingPhase": "Default"
+        }
+    ],
     "Plugins": [
         {
             "Name": "PythonScriptPlugin",
