@@ -21,7 +21,7 @@ import tempfile
 import webbrowser
 from typing import Any
 
-from qtpy.QtCore import Qt, QTimer, Signal
+from qtpy.QtCore import QSettings, QSize, Qt, QTimer, Signal
 from qtpy.QtGui import QCursor, QPixmap
 from qtpy.QtWidgets import (
     QComboBox,
@@ -47,6 +47,7 @@ from ..core.qt_host import get_qapp, parent_to_editor
 log = logging.getLogger(__name__)
 
 WINDOW_TITLE = "Blendkit"
+DEFAULT_WINDOW_SIZE = QSize(570, 640)
 THUMB_SIZE = 150
 GRID_SPACING = 6
 # Manhattan-distance (px) the cursor must move past the press point before a
@@ -340,7 +341,7 @@ class AssetBarWidget(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(WINDOW_TITLE)
-        self.resize(520, 640)
+        self.resize(self._saved_size())
         self._tempdir = tempfile.mkdtemp(prefix="bk_unreal_")
         self._tiles: dict[str, AssetTile] = {}
         self._tile_order: list[AssetTile] = []
@@ -355,6 +356,19 @@ class AssetBarWidget(QWidget):
         self._thumb_ready.connect(self._set_thumbnail)
         self._build_ui()
         client_lib.register_thumbnail_callback(self._on_thumbnail)
+
+    @staticmethod
+    def _settings() -> QSettings:
+        return QSettings("Blendkit", "bk_unreal")
+
+    @classmethod
+    def _saved_size(cls) -> QSize:
+        size = cls._settings().value("asset_bar/size", DEFAULT_WINDOW_SIZE)
+        return size if isinstance(size, QSize) and size.isValid() else DEFAULT_WINDOW_SIZE
+
+    def closeEvent(self, event) -> None:  # Qt override name
+        self._settings().setValue("asset_bar/size", self.size())
+        super().closeEvent(event)
 
     # ── UI construction ──────────────────────────────────────────────────────
 

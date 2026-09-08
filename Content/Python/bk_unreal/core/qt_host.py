@@ -12,12 +12,16 @@ guarded) so the rest of the package — and the test suite — can import it fre
 from __future__ import annotations
 
 import logging
+import threading
+from collections.abc import Callable
 from typing import Any
 
 log = logging.getLogger(__name__)
 
 _qapp: Any = None
 _tick_handle: Any = None
+_main_thread_calls: list[Callable[[], None]] = []
+_main_thread_calls_lock = threading.Lock()
 
 
 def _import_qt() -> Any:
@@ -60,9 +64,25 @@ def _install_tick_pump() -> None:
         app = _qapp
         if app is not None:
             app.processEvents()
+        with _main_thread_calls_lock:
+            calls = _main_thread_calls[:]
+            _main_thread_calls.clear()
+        for callback in calls:
+            try:
+                callback()
+            except Exception:
+                log.exception("Queued editor-thread callback failed")
 
     _tick_handle = unreal.register_slate_post_tick_callback(_pump)
     log.info("Qt event pump installed on Slate post-tick.")
+
+
+def run_on_editor_thread(callback: Callable[[], None]) -> None:
+    """Queue *callback* for the next Slate tick on Unreal's editor thread."""
+    if get_qapp() is None:
+        raise RuntimeError("Qt host is not available to schedule an editor-thread callback.")
+    with _main_thread_calls_lock:
+        _main_thread_calls.append(callback)
 
 
 def parent_to_editor(widget: Any) -> None:

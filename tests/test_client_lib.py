@@ -29,3 +29,32 @@ def test_addon_root_points_at_plugin() -> None:
 def test_client_ports_are_strings() -> None:
     assert client_lib.CLIENT_PORTS
     assert all(isinstance(p, str) and p.isdigit() for p in client_lib.CLIENT_PORTS)
+
+
+def test_run_blender_script_nests_recipe_params(monkeypatch) -> None:
+    captured = {}
+
+    def fake_request(method, url, body=None, **kwargs):
+        captured.update(body or {})
+        return {"task_id": "task-1"}
+
+    monkeypatch.setattr(client_lib, "ensure_running", lambda: "62485")
+    monkeypatch.setattr(client_lib, "_http_request", fake_request)
+
+    result = client_lib.run_blender_script(
+        script_id="export_usd",
+        blender_exe_path="C:/Blender/blender.exe",
+        blend_path="C:/cache/model.blend",
+        output_path="C:/cache/model.usd",
+        out_usd="C:/cache/model.usd",
+        max_resolution="ORIGINAL",
+    )
+
+    assert result["task_id"] == "task-1"
+    assert captured["blend_path"] == "C:/cache/model.blend"
+    assert captured["output_path"] == "C:/cache/model.usd"
+    assert captured["params"] == {
+        "blend_path": "C:/cache/model.blend",
+        "out_usd": "C:/cache/model.usd",
+        "max_resolution": "ORIGINAL",
+    }

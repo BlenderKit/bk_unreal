@@ -263,6 +263,14 @@ def _installed_binary_path() -> str:
     return os.path.join(_installed_binary_dir(), _binary_name())
 
 
+def _src_is_newer(src: str, dst: str) -> bool:
+    """Return ``True`` when the in-plugin binary is newer than the installed copy."""
+    try:
+        return os.path.getmtime(src) > os.path.getmtime(dst)
+    except OSError:
+        return False
+
+
 def _ensure_client_binary_installed() -> str:
     """Resolve the binary to launch, copying to the user's global dir if needed."""
     global _use_inplace_client
@@ -270,7 +278,7 @@ def _ensure_client_binary_installed() -> str:
     src = _inplace_binary_path()
     dst = _installed_binary_path()
 
-    if not _use_inplace_client and os.path.isfile(dst):
+    if not _use_inplace_client and os.path.isfile(dst) and not _src_is_newer(src, dst):
         return dst
 
     if not os.path.isfile(src):
@@ -316,6 +324,7 @@ def _http_request(
     *,
     connect_timeout: float = REQUEST_TIMEOUT,
     read_timeout: float = REQUEST_TIMEOUT,
+    allow_non_json: bool = False,
 ) -> Any:
     """Minimal JSON-in / JSON-out HTTP call. Returns parsed JSON or None."""
     data = None
@@ -325,11 +334,22 @@ def _http_request(
         headers["Content-Type"] = "application/json"
 
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    with urllib.request.urlopen(req, timeout=max(connect_timeout, read_timeout)) as resp:
-        raw = resp.read()
-        if not raw:
-            return None
+    try:
+        with urllib.request.urlopen(req, timeout=max(connect_timeout, read_timeout)) as resp:
+            raw = resp.read()
+    except urllib.error.HTTPError as exc:
+        raw = exc.read()
+        detail = raw.decode("utf-8", errors="replace").strip()
+        suffix = f": {detail}" if detail else ""
+        raise urllib.error.HTTPError(exc.url, exc.code, f"{exc.reason}{suffix}", exc.headers, None) from exc
+    if not raw:
+        return None
+    try:
         return json.loads(raw.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        if allow_non_json:
+            return raw.decode("utf-8", errors="replace")
+        raise RuntimeError(f"Non-JSON response from {url}: {raw[:500]!r}") from exc
 
 
 def _effective_api_key() -> str:
@@ -737,6 +757,119 @@ def asset_prxc_download(
         raise RuntimeError(f"Unexpected /asset_prxc_download response: {resp!r}")
     _start_poller()
     return str(resp["task_id"])
+
+
+def get_download_url(asset_data: dict[str, Any], resolution: str, *, api_key: str = "") -> dict[str, Any]:
+    """Resolve a signed download URL for a Blendkit asset file.
+
+    The client wrapper returns a dict with keys ``can_download``,
+    ``download_url`` and ``filename``. This is the direct URL needed before the
+    actual file is pulled into the model cache.
+    """
+    port = ensure_running()
+    if port is None:
+        raise RuntimeError("No Blendkit client available for asset download.")
+
+    asset_files = list(asset_data.get("files") or [])
+    normalized_files = []
+    for asset_file in asset_files:
+        if not isinstance(asset_file, dict):
+            continue
+        file_type = asset_file.get("fileType") or asset_file.get("file_type") or ""
+        download_url = asset_file.get("downloadUrl") or asset_file.get("download_url") or ""
+        if not file_type or not download_url:
+            continue
+        normalized = dict(asset_file)
+        normalized["fileType"] = str(file_type)
+        normalized["downloadUrl"] = str(download_url)
+        normalized_files.append(normalized)
+    if not normalized_files:
+        raise RuntimeError(
+            f"Asset {asset_data.get('name') or asset_data.get('assetBaseId') or asset_data.get('id') or '?'} "
+            "has no downloadable files in its search result."
+        )
+    effective_api_key = api_key or _effective_api_key()
+    scene_uuid = str(asset_data.get("sceneUuid") or asset_data.get("scene_uuid") or uuid.uuid4())
+    prefs_block = _prefs_block()
+    prefs_block["api_key"] = effective_api_key
+    prefs_block["scene_id"] = scene_uuid
+    prefs_block["resolution"] = str(resolution or _prefs_mod.prefs.resolution)
+    body = {
+        "addon_version": ADDON_VERSION,
+        "platform_version": platform.platform(),
+        "app_id": _app_id,
+        "resolution": str(resolution or _prefs_mod.prefs.resolution),
+        "asset_data": {
+            "name": str(asset_data.get("name") or ""),
+            "id": str(asset_data.get("id") or asset_data.get("assetBaseId") or ""),
+            "files": normalized_files,
+            "resolution": str(resolution or _prefs_mod.prefs.resolution),
+            "assetType": str(asset_data.get("assetType") or "model"),
+        },
+        "PREFS": prefs_block,
+    }
+    resp = _http_request("POST", f"{get_base_url()}/wrappers/get_download_url", body=body)
+    if not isinstance(resp, dict):
+        raise TypeError(f"Unexpected /wrappers/get_download_url response: {resp!r}")
+    return resp
+
+
+def blocking_file_download(file_url: str, file_path: str, *, api_key: str = "") -> bool:
+    """Download *file_url* to *file_path* via the client's blocking wrapper."""
+    port = ensure_running()
+    if port is None:
+        raise RuntimeError("No Blendkit client available for blocking download.")
+
+    body = {
+        "app_id": _app_id,
+        "api_key": api_key or _effective_api_key(),
+        "url": file_url,
+        "filepath": file_path,
+    }
+    resp = _http_request(
+        "POST",
+        f"{get_base_url()}/wrappers/blocking_file_download",
+        body=body,
+        allow_non_json=True,
+    )
+    return resp is not None
+
+
+def run_blender_script(
+    *,
+    script_id: str,
+    blender_exe_path: str,
+    blend_path: str = "",
+    output_path: str = "",
+    **params: Any,
+) -> dict[str, Any]:
+    """Launch the bundled Blender recipe via the client.
+
+    Returns the JSON response from the client, typically including a task_id.
+    """
+    port = ensure_running()
+    if port is None:
+        raise RuntimeError("No Blendkit client available for Blender script execution.")
+
+    recipe_params = dict(params)
+    if blend_path:
+        recipe_params.setdefault("blend_path", blend_path)
+
+    body: dict[str, Any] = {
+        "script_id": script_id,
+        "blender_exe_path": blender_exe_path,
+        "blend_path": blend_path,
+        "output_path": output_path,
+        "app_id": _app_id,
+        "addon_version": ADDON_VERSION,
+        "platform_version": platform.platform(),
+        "software": SOFTWARE_NAME,
+        "params": recipe_params,
+    }
+    resp = _http_request("POST", f"{get_base_url()}/run_blender_script", body=body)
+    if not isinstance(resp, dict):
+        raise TypeError(f"Unexpected /run_blender_script response: {resp!r}")
+    return resp
 
 
 # ── OAuth ─────────────────────────────────────────────────────────────────────

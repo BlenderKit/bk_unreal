@@ -70,6 +70,8 @@ _DRAW_DURATION = 0.05
 _BOX_THICKNESS_PX = 3.0
 _PROXOR_LINE_THICKNESS_PX = 2.0
 _MIN_WORLD_THICKNESS = 0.25  # cm floor so thickness never collapses to 0
+_LABEL_OFFSET_PX = 18.0
+_PROGRESS_BAR_WIDTH_PX = 90.0
 
 _COLOR_HIT = (0, 220, 80)  # green - geometry hit
 _COLOR_FLOOR = (0, 220, 80)  # green - floor fallback (was cyan; wire+proxor should read as one color)
@@ -90,7 +92,8 @@ def _unreal() -> Any:
 
 def _editor_world(unreal_mod: Any) -> Any:
     try:
-        return unreal_mod.UnrealEditorSubsystem().get_editor_world()
+        subsystem = unreal_mod.get_editor_subsystem(unreal_mod.UnrealEditorSubsystem)
+        return subsystem.get_editor_world()
     except Exception:
         pass
     try:
@@ -442,9 +445,10 @@ def _line_trace(unreal_mod: Any, world: Any, ray_start: Any, ray_end: Any) -> An
     """
     global _warned_line_trace
     try:
+        object_type_query = unreal_mod.ObjectTypeQuery
         object_types = [
-            unreal_mod.ObjectTypeQuery.OBJECT_TYPE_QUERY1,  # WorldStatic
-            unreal_mod.ObjectTypeQuery.OBJECT_TYPE_QUERY2,  # WorldDynamic
+            getattr(object_type_query, "ECC_WORLD_STATIC", object_type_query.OBJECT_TYPE_QUERY1),
+            getattr(object_type_query, "ECC_WORLD_DYNAMIC", object_type_query.OBJECT_TYPE_QUERY2),
         ]
         result = unreal_mod.SystemLibrary.line_trace_single_for_objects(
             world,
@@ -467,6 +471,8 @@ def _line_trace(unreal_mod: Any, world: Any, ray_start: Any, ray_end: Any) -> An
         return hit if success else None
     if hasattr(result, "b_blocking_hit"):
         return result if result.b_blocking_hit else None
+    if hasattr(result, "location") and (hasattr(result, "impact_normal") or hasattr(result, "normal")):
+        return result
     if result is not None and not _warned_line_trace:
         log.warning("line_trace_single returned an unexpected type: %r", type(result))
         _warned_line_trace = True
@@ -527,13 +533,34 @@ _BOX_EDGES = (
     (2, 6), (3, 7), (4, 5), (4, 6), (5, 7), (6, 7),
 )  # fmt: skip
 
+_Transform = tuple[tuple[float, float, float], float, float, float]
 
-def _local_to_world(pt: tuple, loc: tuple, rot_z_deg: float) -> tuple[float, float, float]:
-    rad = math.radians(rot_z_deg)
+
+def _rotate_x(y: float, z: float, degrees: float) -> tuple[float, float]:
+    rad = math.radians(degrees)
     cos_r, sin_r = math.cos(rad), math.sin(rad)
-    x = pt[0] * cos_r - pt[1] * sin_r
-    y = pt[0] * sin_r + pt[1] * cos_r
-    return (loc[0] + x, loc[1] + y, loc[2] + pt[2])
+    return y * cos_r - z * sin_r, y * sin_r + z * cos_r
+
+
+def _local_to_world(
+    pt: tuple,
+    loc: tuple,
+    rot_z_deg: float,
+    basis_rot_x_deg: float = 0.0,
+    basis_rot_z_deg: float = 0.0,
+) -> tuple[float, float, float]:
+    x, y, z = pt
+    if basis_rot_x_deg % 360:
+        y, z = _rotate_x(y, z, basis_rot_x_deg)
+    rad = math.radians(basis_rot_z_deg + rot_z_deg)
+    cos_r, sin_r = math.cos(rad), math.sin(rad)
+    x, y = x * cos_r - y * sin_r, x * sin_r + y * cos_r
+    return (loc[0] + x, loc[1] + y, loc[2] + z)
+
+
+def _transform_point(pt: tuple, transform: _Transform) -> tuple[float, float, float]:
+    loc, rotation_z, basis_rotation_x, basis_rotation_z = transform
+    return _local_to_world(pt, loc, rotation_z, basis_rotation_x, basis_rotation_z)
 
 
 _warned_no_units_per_pixel = False
@@ -593,31 +620,133 @@ def update_preview_actor(_actor: Any, state: Any) -> None:
     upp = _units_per_pixel(unreal_mod, state.location)
     box_thickness = max(_MIN_WORLD_THICKNESS, _BOX_THICKNESS_PX * upp)
     proxor_thickness = max(_MIN_WORLD_THICKNESS, _PROXOR_LINE_THICKNESS_PX * upp)
+    basis_rotation_x = float(getattr(state, "basis_rotation_x", 0.0))
+    basis_rotation_z = float(getattr(state, "basis_rotation_z", 0.0))
+    rotation_z = float(state.rotation_z)
+    transform = (state.location, rotation_z, basis_rotation_x, basis_rotation_z)
 
-    corners = [
-        _local_to_world(p, state.location, state.rotation_z) for p in _bbox_corners(state.bbox_min, state.bbox_max)
-    ]
+    corners = [_transform_point(p, transform) for p in _bbox_corners(state.bbox_min, state.bbox_max)]
     for a, b in _BOX_EDGES:
         _draw_line(unreal_mod, corners[a], corners[b], color, box_thickness)
 
-    for seg in state.proxor_lines:
-        a = _local_to_world(seg[0], state.location, state.rotation_z)
-        b = _local_to_world(seg[1], state.location, state.rotation_z)
-        _draw_line(unreal_mod, a, b, color, proxor_thickness)
+    if getattr(state, "downloading", False):
+        _draw_proxor_lines_with_reveal(unreal_mod, state, color, proxor_thickness, transform)
+    else:
+        for seg in state.proxor_lines:
+            a = _transform_point(seg[0], transform)
+            b = _transform_point(seg[1], transform)
+            _draw_line(unreal_mod, a, b, color, proxor_thickness)
 
     for seg in state.arrow_lines:
-        a = _local_to_world(seg[0], state.location, state.rotation_z)
-        b = _local_to_world(seg[1], state.location, state.rotation_z)
+        a = _transform_point(seg[0], transform)
+        b = _transform_point(seg[1], transform)
         _draw_line(unreal_mod, a, b, color, box_thickness)
 
     if state.proxor_mesh:
-        _draw_proxor_mesh(unreal_mod, state, color, proxor_thickness)
+        _draw_proxor_mesh(unreal_mod, state, color, proxor_thickness, transform)
+
+    if getattr(state, "downloading", False):
+        _draw_download_overlay(unreal_mod, state, color, box_thickness, transform)
+
+
+def _download_reveal_z(state: Any) -> float:
+    progress = max(0.0, min(1.0, float(getattr(state, "download_progress", 0.0))))
+    return float(state.bbox_min[2]) + (float(state.bbox_max[2]) - float(state.bbox_min[2])) * progress
+
+
+def _clip_segment_z(a: tuple, b: tuple, z_limit: float) -> tuple[tuple, tuple] | None:
+    az = float(a[2])
+    bz = float(b[2])
+    if az <= z_limit and bz <= z_limit:
+        return a, b
+    if az > z_limit and bz > z_limit:
+        return None
+    denom = bz - az
+    if abs(denom) < 1e-9:
+        return None
+    t = (z_limit - az) / denom
+    mid = (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, z_limit)
+    return (a, mid) if az <= z_limit else (mid, b)
+
+
+def _draw_proxor_lines_with_reveal(
+    unreal_mod: Any,
+    state: Any,
+    color: Any,
+    thickness: float,
+    transform: _Transform,
+) -> None:
+    reveal_z = _download_reveal_z(state)
+    muted = unreal_mod.LinearColor(color.r * 0.35, color.g * 0.35, color.b * 0.35, 0.35)
+    for seg in state.proxor_lines:
+        a_local, b_local = seg[0], seg[1]
+        a = _transform_point(a_local, transform)
+        b = _transform_point(b_local, transform)
+        _draw_line(unreal_mod, a, b, muted, max(thickness * 0.65, _MIN_WORLD_THICKNESS))
+        clipped = _clip_segment_z(a_local, b_local, reveal_z)
+        if clipped is None:
+            continue
+        ca = _transform_point(clipped[0], transform)
+        cb = _transform_point(clipped[1], transform)
+        _draw_line(unreal_mod, ca, cb, color, thickness)
+
+
+def _draw_download_overlay(
+    unreal_mod: Any,
+    state: Any,
+    color: Any,
+    thickness: float,
+    transform: _Transform,
+) -> None:
+    corners = [_transform_point(p, transform) for p in _bbox_corners(state.bbox_min, state.bbox_max)]
+    top_z = max(p[2] for p in corners)
+    center_x = sum(p[0] for p in corners) / len(corners)
+    center_y = sum(p[1] for p in corners) / len(corners)
+    upp = _units_per_pixel(unreal_mod, (center_x, center_y, top_z))
+    label_loc = (center_x, center_y, top_z + _LABEL_OFFSET_PX * upp)
+    asset_name = str(state.asset_data.get("name") or state.asset_data.get("displayName") or "Asset")
+    status = str(getattr(state, "download_status", "") or "Processing")
+    progress = max(0.0, min(1.0, float(getattr(state, "download_progress", 0.0))))
+    _draw_text(unreal_mod, label_loc, f"{asset_name} - {status} {round(progress * 100)}%", color)
+
+    half = _PROGRESS_BAR_WIDTH_PX * upp * 0.5
+    y = label_loc[1]
+    z = label_loc[2] - _LABEL_OFFSET_PX * upp * 0.35
+    x0 = label_loc[0] - half
+    x1 = label_loc[0] + half
+    xf = x0 + (x1 - x0) * progress
+    bg = unreal_mod.LinearColor(0.05, 0.05, 0.05, 1.0)
+    _draw_line(unreal_mod, (x0, y, z), (x1, y, z), bg, max(thickness, 2.0 * upp))
+    _draw_line(unreal_mod, (x0, y, z), (xf, y, z), color, max(thickness, 3.0 * upp))
+
+
+def _draw_text(unreal_mod: Any, location: tuple, text: str, color: Any) -> None:
+    world = _editor_world(unreal_mod)
+    if world is None:
+        return
+    try:
+        unreal_mod.SystemLibrary.draw_debug_string(
+            world,
+            unreal_mod.Vector(*location),
+            text,
+            None,
+            color,
+            _DRAW_DURATION,
+        )
+    except Exception as exc:
+        log.debug("draw_debug_string failed: %s", exc)
 
 
 _warned_no_mesh_draw = False
 
 
-def _draw_proxor_mesh(unreal_mod: Any, state: Any, color: Any, fallback_thickness: float) -> None:
+def _draw_proxor_mesh(
+    unreal_mod: Any,
+    state: Any,
+    color: Any,
+    fallback_thickness: float,
+    transform: _Transform,
+) -> None:
     """Draw the proxor hologram fill as an immediate-mode triangle mesh.
 
     Uses the same green/cyan/red hit-state *color* as the bbox wireframe (a
@@ -634,7 +763,16 @@ def _draw_proxor_mesh(unreal_mod: Any, state: Any, color: Any, fallback_thicknes
     world = _editor_world(unreal_mod)
     if world is None:
         return
-    verts = [unreal_mod.Vector(*_local_to_world(p, state.location, state.rotation_z)) for p in state.proxor_mesh]
+    mesh = list(state.proxor_mesh)
+    if getattr(state, "downloading", False):
+        reveal_z = _download_reveal_z(state)
+        shown: list = []
+        for i in range(0, len(mesh) - 2, 3):
+            tri = mesh[i : i + 3]
+            if sum(float(p[2]) for p in tri) / 3.0 <= reveal_z:
+                shown.extend(tri)
+        mesh = shown
+    verts = [unreal_mod.Vector(*_transform_point(p, transform)) for p in mesh]
     n_tris = len(verts) // 3
     if n_tris <= 0:
         return

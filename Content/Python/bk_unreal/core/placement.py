@@ -18,7 +18,6 @@ Flow, mirroring bk_maya:
 from __future__ import annotations
 
 import logging
-import math
 import os
 import threading
 from dataclasses import dataclass, field
@@ -31,24 +30,16 @@ log = logging.getLogger(__name__)
 
 WHEEL_STEP = 5.0  # degrees per wheel notch
 
-# Proxor coordinates are a normalized [0,1] bounding volume anchored at the
-# bottom-center (Z up, X left), same topology as the asset bbox - so the fit
-# below only needs a fixed axis correction, not a guessed value: confirmed
-# the proxor's own "up" axis needs a -90 deg rotation about X (not a Z yaw)
-# to line up with the bbox's Z-up frame.
-_PROXOR_ROTATE_X_DEG = -90.0
+# ``bk_proxor._unreal.draw`` already expands PRX into Unreal Z-up centimetres.
+# Keep the proxor's coordinate-system difference as a draw transform only:
+# default proxor forward Y+ -> Unreal X+.
+_PROXOR_BASIS_ROTATION_X_DEG = -90.0
+_PROXOR_BASIS_ROTATION_Z_DEG = -90.0
 
 # Set False if the hologram is still front/back (or left/right) mirrored
 # relative to the placed asset after the X-rotation above - a mirror can't
 # be fixed by rotation alone.
 _PROXOR_FLIP_Y = True
-
-
-def _rotate_x(y: float, z: float, degrees: float) -> tuple[float, float]:
-    """Rotate (y, z) by *degrees* about the X axis (right-hand rule)."""
-    rad = math.radians(degrees)
-    cos_r, sin_r = math.cos(rad), math.sin(rad)
-    return y * cos_r - z * sin_r, y * sin_r + z * cos_r
 
 
 def _meters_to_internal() -> float:
@@ -71,6 +62,11 @@ class _State:
     proxor_lines: list = field(default_factory=list)
     proxor_mesh: list = field(default_factory=list)
     arrow_lines: list = field(default_factory=list)
+    basis_rotation_x: float = 0.0
+    basis_rotation_z: float = 0.0
+    downloading: bool = False
+    download_progress: float = 0.0
+    download_status: str = ""
 
 
 _active_state = _State(asset_data={}, thumb_path="", bbox_min=(0, 0, 0), bbox_max=(0, 0, 0))
@@ -102,10 +98,10 @@ def _parse_prxc(prxc_path: str) -> dict[str, Any]:
     Points are already scaled to Unreal centimetres and mirrored to Unreal's
     left-handed frame (see ``bk_proxor._unreal.draw``).
     """
-    out: dict[str, Any] = {"lines": [], "mesh": []}
+    out: dict[str, Any] = {"lines": [], "mesh": [], "arrow": []}
     try:
         from ..bk_proxor import prx_format as pf
-        from ..bk_proxor._unreal.draw import prx_to_line_segments, prx_to_mesh_triangles
+        from ..bk_proxor._unreal.draw import prx_to_arrow_segments, prx_to_line_segments, prx_to_mesh_triangles
     except Exception as exc:
         log.debug("bk_proxor unavailable: %s", exc)
         return out
@@ -114,6 +110,8 @@ def _parse_prxc(prxc_path: str) -> dict[str, Any]:
         scale = _meters_to_internal()
         out["lines"] = prx_to_line_segments(payload, world_scale=scale, flip_y=_PROXOR_FLIP_Y)
         out["mesh"] = prx_to_mesh_triangles(payload, world_scale=scale, flip_y=_PROXOR_FLIP_Y)
+        out["arrow"] = prx_to_arrow_segments(payload, world_scale=scale, flip_y=_PROXOR_FLIP_Y)
+        _prepare_proxor_payload(out)
     except Exception as exc:
         log.debug("Proxor parse failed for %s: %s", prxc_path, exc)
         return out
@@ -131,83 +129,37 @@ def _load_proxor_payload(asset_data: dict[str, Any]) -> dict[str, Any]:
     path = _proxor_cache_path(asset_data)
     if path and os.path.isfile(path):
         return _parse_prxc(path)
-    return {"lines": [], "mesh": []}
+    return {"lines": [], "mesh": [], "arrow": []}
 
 
-def _bbox_arrow(
-    bbox_min: tuple[float, float, float],
-    bbox_max: tuple[float, float, float],
-) -> list[list[tuple[float, float, float]]]:
-    """Two floor-level lines from the bbox's front-bottom corners to a tip in front.
-
-    Mirrors the default green bounding-box arrow drawn by the Blender/bk_maya
-    proxor handler. Built directly from the already-correct, already-fitted
-    asset bbox rather than the raw ``.prx`` mesh space: routing it through
-    the proxor library's own raw-space arrow math (``prx_to_arrow_segments``)
-    produced a tip offset wildly out of proportion for real (non-unit-cube)
-    assets - the bbox is always right-sized/positioned since the wire itself
-    is drawn from it, so building the arrow from the same numbers guarantees
-    it stays attached and proportional.
-    """
-    width = bbox_max[0] - bbox_min[0]
-    if width <= 0:
-        return []
-    cx = (bbox_min[0] + bbox_max[0]) / 2.0
-    z = bbox_min[2]
-    p_left = (bbox_min[0], bbox_min[1], z)
-    p_right = (bbox_max[0], bbox_min[1], z)
-    tip = (cx, bbox_min[1] - width / 2.0, z)
-    return [[p_left, tip], [p_right, tip]]
+def _bounds_from_points(
+    points: list[tuple[float, float, float]],
+) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:
+    if not points:
+        return None
+    return tuple(min(p[i] for p in points) for i in range(3)), tuple(max(p[i] for p in points) for i in range(3))
 
 
-def _fit_proxor_to_bbox(
-    prxc: dict[str, Any],
-    bbox_min: tuple[float, float, float],
-    bbox_max: tuple[float, float, float],
-) -> None:
-    """Uniformly rescale + translate proxor geometry to sit inside *bbox_min/max*.
+def _translate_point(p: tuple, origin: tuple[float, float, float]) -> tuple[float, float, float]:
+    return (p[0] - origin[0], p[1] - origin[1], p[2] - origin[2])
 
-    Earlier versions rescaled X/Y/Z independently to force an exact bbox
-    match, but a non-uniform scale visibly squishes/stretches the shape
-    when the proxor's own aspect ratio doesn't match the bbox's - so this
-    uses a single uniform scale (the smallest per-axis ratio, i.e. "contain"
-    not "stretch") to preserve proportions, then centers the result on X/Y
-    and sits it on the bbox floor (min Z) like a normal placed asset.
-    ``_PROXOR_ROTATE_X_DEG`` corrects the proxor's up-axis before fitting.
-    """
+
+def _prepare_proxor_payload(prxc: dict[str, Any]) -> None:
+    """Use expanded proxor coordinates as-is, anchored at their bottom center."""
     lines = prxc.get("lines") or []
     mesh = prxc.get("mesh") or []
-    if _PROXOR_ROTATE_X_DEG % 360:
-        deg = _PROXOR_ROTATE_X_DEG
-
-        def _pitch(p: tuple) -> tuple[float, float, float]:
-            y, z = _rotate_x(p[1], p[2], deg)
-            return (p[0], y, z)
-
-        lines = [[_pitch(a), _pitch(b)] for a, b in lines]
-        mesh = [_pitch(p) for p in mesh]
-
+    arrow = prxc.get("arrow") or []
     points = [p for seg in lines for p in seg] + list(mesh)
-    if not points:
+    bounds = _bounds_from_points(points)
+    if bounds is None:
         return
-    proxor_min = [min(p[i] for p in points) for i in range(3)]
-    proxor_max = [max(p[i] for p in points) for i in range(3)]
-    proxor_span = [proxor_max[i] - proxor_min[i] for i in range(3)]
-    bbox_span = [bbox_max[i] - bbox_min[i] for i in range(3)]
-    ratios = [bbox_span[i] / proxor_span[i] for i in range(3) if proxor_span[i] > 1e-6]
-    scale = min(ratios) if ratios else 1.0
-
-    proxor_center = [(proxor_min[i] + proxor_max[i]) / 2.0 for i in range(3)]
-    target_center = [(bbox_min[i] + bbox_max[i]) / 2.0 for i in range(2)] + [bbox_min[2] - proxor_min[2] * scale]
-
-    def _fit(p: tuple) -> tuple[float, float, float]:
-        x = target_center[0] + (p[0] - proxor_center[0]) * scale
-        y = target_center[1] + (p[1] - proxor_center[1]) * scale
-        z = target_center[2] + p[2] * scale
-        return (x, y, z)
-
-    prxc["lines"] = [[_fit(a), _fit(b)] for a, b in lines]
-    prxc["mesh"] = [_fit(p) for p in mesh]
+    bbox_min, bbox_max = bounds
+    origin = ((bbox_min[0] + bbox_max[0]) * 0.5, (bbox_min[1] + bbox_max[1]) * 0.5, bbox_min[2])
+    prxc["lines"] = [[_translate_point(a, origin), _translate_point(b, origin)] for a, b in lines]
+    prxc["mesh"] = [_translate_point(p, origin) for p in mesh]
+    prxc["arrow"] = [[_translate_point(a, origin), _translate_point(b, origin)] for a, b in arrow]
+    prxc["bbox_min"] = _translate_point(bbox_min, origin)
+    prxc["bbox_max"] = _translate_point(bbox_max, origin)
 
 
 def _coerce_bbox(v: Any, default: tuple[float, float, float], scale: float) -> tuple[float, float, float]:
@@ -227,7 +179,7 @@ def _coerce_bbox(v: Any, default: tuple[float, float, float], scale: float) -> t
 
 
 def _asset_bbox(asset_data: dict[str, Any]) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
-    """Return ``(bbox_min, bbox_max)`` in Unreal cm, mirrored to its frame."""
+    """Return fallback ``(bbox_min, bbox_max)`` from search data in Unreal cm."""
     scale = _meters_to_internal()
     default_min = (-0.5 * scale, -0.5 * scale, 0.0)
     default_max = (0.5 * scale, 0.5 * scale, 1.0 * scale)
@@ -256,6 +208,24 @@ def _asset_bbox(asset_data: dict[str, Any]) -> tuple[tuple[float, float, float],
     return out_min, out_max
 
 
+def _preview_from_payload(
+    prxc: dict[str, Any],
+    fallback_bbox_min: tuple[float, float, float],
+    fallback_bbox_max: tuple[float, float, float],
+) -> tuple[tuple[float, float, float], tuple[float, float, float], list, list, list, float, float]:
+    if prxc.get("bbox_min") and prxc.get("bbox_max"):
+        return (
+            prxc["bbox_min"],
+            prxc["bbox_max"],
+            prxc.get("lines", []),
+            prxc.get("mesh", []),
+            prxc.get("arrow", []),
+            _PROXOR_BASIS_ROTATION_X_DEG,
+            _PROXOR_BASIS_ROTATION_Z_DEG,
+        )
+    return fallback_bbox_min, fallback_bbox_max, [], [], [], 0.0, 0.0
+
+
 class DragSession:
     """Singleton drag-session state machine (mirrors bk_maya's ``DragSession``)."""
 
@@ -282,16 +252,22 @@ class DragSession:
 
         bbox_min, bbox_max = _asset_bbox(asset_data)
         prxc = _load_proxor_payload(asset_data)
-        _fit_proxor_to_bbox(prxc, bbox_min, bbox_max)
+        bbox_min, bbox_max, lines, mesh, arrow, basis_rotation_x, basis_rotation_z = _preview_from_payload(
+            prxc,
+            bbox_min,
+            bbox_max,
+        )
         _active_state = _State(
             asset_data=asset_data,
             thumb_path=thumb_path,
             bbox_min=bbox_min,
             bbox_max=bbox_max,
             active=True,
-            proxor_lines=prxc.get("lines", []),
-            proxor_mesh=prxc.get("mesh", []),
-            arrow_lines=_bbox_arrow(bbox_min, bbox_max),
+            proxor_lines=lines,
+            proxor_mesh=mesh,
+            arrow_lines=arrow,
+            basis_rotation_x=basis_rotation_x,
+            basis_rotation_z=basis_rotation_z,
         )
         log.info("Drag start: asset=%s bbox_min=%s bbox_max=%s", asset_data.get("name", "?"), bbox_min, bbox_max)
         log.debug(
@@ -315,6 +291,7 @@ class DragSession:
         if not _active_state.active:
             return
         _active_state.active = False
+        _active_state.downloading = False
         viewport_ue.set_wheel_capture_active(False)
         viewport_ue.uninstall_tick(self._tick_handle)
         self._tick_handle = None
@@ -327,21 +304,51 @@ class DragSession:
         if not _active_state.active:
             return
         state = _active_state
-        _active_state.active = False
+        _active_state.downloading = True
+        _active_state.download_progress = 0.0
+        _active_state.download_status = "Starting"
         viewport_ue.set_wheel_capture_active(False)
-        viewport_ue.uninstall_tick(self._tick_handle)
-        self._tick_handle = None
-        viewport_ue.destroy_preview_actor(self._preview_actor)
-        self._preview_actor = None
-        if state.has_hit:
-            log.info(
-                "Drop: asset=%s at %s (floor=%s) - import/spawn pending Content Browser pipeline.",
-                state.asset_data.get("name", "?"),
-                state.location,
-                state.hit_floor,
-            )
-        else:
+        if not state.has_hit:
+            _active_state.active = False
+            _active_state.downloading = False
+            viewport_ue.uninstall_tick(self._tick_handle)
+            self._tick_handle = None
+            viewport_ue.destroy_preview_actor(self._preview_actor)
+            self._preview_actor = None
             log.info("Drop ignored: no valid surface under cursor.")
+            return
+
+        log.info(
+            "Drop: asset=%s at %s (floor=%s) - starting model download/import pipeline.",
+            state.asset_data.get("name", "?"),
+            state.location,
+            state.hit_floor,
+        )
+        try:
+            from . import download
+
+            controller = download.DownloadController(
+                asset_data=state.asset_data,
+                drop_location=state.location,
+                drop_normal=state.surface_normal,
+                drop_rotation_z=state.rotation_z,
+                progress_callback=self._on_download_progress,
+                finished_callback=self._on_download_finished,
+            )
+            controller.start()
+        except Exception as exc:  # pragma: no cover - editor-side fallback
+            _active_state.download_status = "Failed"
+            log.exception("Unhandled model import pipeline start failed: %s", exc)
+
+    def _on_download_progress(self, progress: float, status: str) -> None:
+        _active_state.download_progress = max(0.0, min(1.0, float(progress)))
+        _active_state.download_status = status
+
+    def _on_download_finished(self, success: bool, status: str) -> None:
+        _active_state.download_progress = 1.0 if success else _active_state.download_progress
+        _active_state.download_status = status
+        _active_state.downloading = False
+        _active_state.active = False
 
     # ── Proxor async fetch ───────────────────────────────────────────────
 
@@ -376,21 +383,38 @@ class DragSession:
         if not _active_state.active:
             return
         payload = _parse_prxc(prxc_path)
-        _fit_proxor_to_bbox(payload, _active_state.bbox_min, _active_state.bbox_max)
-        lines = payload.get("lines", [])
-        mesh = payload.get("mesh", [])
+        bbox_min, bbox_max, lines, mesh, arrow, basis_rotation_x, basis_rotation_z = _preview_from_payload(
+            payload,
+            _active_state.bbox_min,
+            _active_state.bbox_max,
+        )
         if not lines and not mesh:
             return
+        _active_state.bbox_min = bbox_min
+        _active_state.bbox_max = bbox_max
         _active_state.proxor_lines = lines
         _active_state.proxor_mesh = mesh
-        log.info("[PROXOR] live swap-in: %d segments, %d mesh-verts", len(lines), len(mesh))
+        _active_state.arrow_lines = arrow
+        _active_state.basis_rotation_x = basis_rotation_x
+        _active_state.basis_rotation_z = basis_rotation_z
+        log.info(
+            "[PROXOR] live swap-in: %d segments, %d mesh-verts, %d arrow segments", len(lines), len(mesh), len(arrow)
+        )
 
     # ── Poll tick ────────────────────────────────────────────────────────
 
     def _poll_cursor(self, _delta_seconds: float = 0.0) -> None:
         if not _active_state.active:
+            viewport_ue.uninstall_tick(self._tick_handle)
+            self._tick_handle = None
+            viewport_ue.destroy_preview_actor(self._preview_actor)
+            self._preview_actor = None
             return
         self._tick_count += 1
+
+        if _active_state.downloading:
+            viewport_ue.update_preview_actor(self._preview_actor, _active_state)
+            return
 
         buttons = viewport_ue.consume_mouse_buttons()
         if buttons.get("rmb_up") or buttons.get("esc"):
@@ -402,7 +426,7 @@ class DragSession:
 
         wheel = viewport_ue.consume_wheel_delta()
         if wheel:
-            _active_state.rotation_z += wheel * WHEEL_STEP
+            _active_state.rotation_z -= float(wheel) * WHEEL_STEP
 
         ray = viewport_ue.get_mouse_world_ray()
         if ray is None:
