@@ -29,6 +29,7 @@ _bck/
 .DS_Store
 
 
-# ai garbage
+# ai and garbage
 .github/instructions/
 .github/copilot-instructions.md
+_debug/

@@ -27,3 +27,9 @@ def toggle(asset_id: str) -> bool:
         marked = True
     prefs.save()
     return marked
+
+
+def clear() -> None:
+    """Remove all local bookmarks (called on logout)."""
+    prefs.bookmarks.clear()
+    prefs.save()

@@ -11,7 +11,9 @@ small; mirrors the subset of bk_maya's preferences that the Unreal port acts on
 from __future__ import annotations
 
 import logging
+from typing import Any
 
+from qtpy.QtCore import Signal
 from qtpy.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -26,7 +28,7 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
-from ..core import blender_runner
+from ..core import auth, blender_runner
 from ..core.prefs import RESOLUTIONS, prefs
 from ..core.qt_host import get_qapp, parent_to_editor
 
@@ -40,22 +42,53 @@ _current_dialog: SettingsDialog | None = None
 class SettingsDialog(QDialog):
     """Preferences editor for the Blendkit Unreal plugin."""
 
+    # Emitted from the login worker thread; queued to the GUI thread by Qt
+    # because signal/slot connections across threads default to queued.
+    _login_finished = Signal(bool)
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(WINDOW_TITLE)
         self.setMinimumWidth(460)
         self._build_ui()
         self._load_from_prefs()
+        self._login_finished.connect(self._on_login_finished)
+        auth.add_login_listener(self._refresh_account_status)
+
+    def closeEvent(self, event: Any) -> None:
+        auth.remove_login_listener(self._refresh_account_status)
+        super().closeEvent(event)
 
     # ── UI construction ──────────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
         form = QFormLayout(self)
 
+        self.account_status = QLabel("")
+        form.addRow("Account", self.account_status)
+
+        account_row = QWidget()
+        account_layout = QHBoxLayout(account_row)
+        account_layout.setContentsMargins(0, 0, 0, 0)
+        self.login_button = QPushButton("Log In via Browser\u2026")
+        self.login_button.clicked.connect(self._start_login)
+        self.logout_button = QPushButton("Log Out")
+        self.logout_button.clicked.connect(self._logout)
+        account_layout.addWidget(self.login_button)
+        account_layout.addWidget(self.logout_button)
+        form.addRow("", account_row)
+
         self.api_key_field = QLineEdit()
         self.api_key_field.setEchoMode(QLineEdit.EchoMode.Password)
-        self.api_key_field.setPlaceholderText("Blendkit API key")
-        form.addRow("API key", self.api_key_field)
+        self.api_key_field.setPlaceholderText("Paste API key here\u2026 (fallback if login doesn't work)")
+        apply_key = QPushButton("Apply")
+        apply_key.clicked.connect(self._apply_manual_key)
+        api_key_row = QWidget()
+        api_key_layout = QHBoxLayout(api_key_row)
+        api_key_layout.setContentsMargins(0, 0, 0, 0)
+        api_key_layout.addWidget(self.api_key_field, 1)
+        api_key_layout.addWidget(apply_key)
+        form.addRow("API key", api_key_row)
 
         self.ssl_check = QCheckBox("Verify SSL certificates")
         form.addRow("Security", self.ssl_check)
@@ -100,13 +133,47 @@ class SettingsDialog(QDialog):
     # ── State sync ───────────────────────────────────────────────────────────
 
     def _load_from_prefs(self) -> None:
-        self.api_key_field.setText(prefs.api_key)
+        self._refresh_account_status()
         self.ssl_check.setChecked(prefs.ssl_verification)
         self.global_dir_field.setText(prefs.global_dir)
         index = self.resolution_combo.findText(prefs.resolution)
         self.resolution_combo.setCurrentIndex(index if index >= 0 else self.resolution_combo.count() - 1)
         self.blender_field.setText(prefs.blender_exe)
         self._detect_blender()
+
+    def _refresh_account_status(self) -> None:
+        """Update the status label + button enabled-state from the auth module.
+
+        Safe to call from the poller thread (only touches these widgets'
+        thread-safe setters) - registered as an :func:`auth.add_login_listener`.
+        """
+        logged_in = auth.is_logged_in()
+        self.account_status.setText("\u25cf Logged in" if logged_in else "\u25cb Not logged in")
+        self.login_button.setEnabled(not logged_in)
+        self.logout_button.setEnabled(logged_in)
+
+    def _start_login(self) -> None:
+        self.login_button.setEnabled(False)
+        self.login_button.setText("Waiting for browser\u2026")
+        auth.login_async(self._login_finished.emit)
+
+    def _on_login_finished(self, ok: bool) -> None:
+        self.login_button.setText("Log In via Browser\u2026")
+        self._refresh_account_status()
+        if not ok:
+            log.warning("Blendkit login did not complete.")
+
+    def _logout(self) -> None:
+        auth.logout()
+        self._refresh_account_status()
+
+    def _apply_manual_key(self) -> None:
+        key = self.api_key_field.text().strip()
+        if not key:
+            return
+        auth.set_manual_api_key(key)
+        self.api_key_field.clear()
+        self._refresh_account_status()
 
     def _browse_dir(self) -> None:
         chosen = QFileDialog.getExistingDirectory(self, "Blendkit data directory", self.global_dir_field.text())
@@ -143,7 +210,6 @@ class SettingsDialog(QDialog):
             )
 
     def _save(self) -> None:
-        prefs.api_key = self.api_key_field.text().strip()
         prefs.ssl_verification = self.ssl_check.isChecked()
         prefs.global_dir = self.global_dir_field.text().strip()
         prefs.resolution = self.resolution_combo.currentText()

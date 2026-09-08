@@ -332,10 +332,19 @@ def _http_request(
         return json.loads(raw.decode("utf-8"))
 
 
-def _minimal_report_data() -> dict[str, Any]:
+def _effective_api_key() -> str:
+    """Return the OAuth access token if logged in, else the manual prefs override."""
+    try:
+        from . import auth
+    except ImportError:
+        return _prefs_mod.prefs.api_key
+    return auth.get_api_key() or _prefs_mod.prefs.api_key
+
+
+def _minimal_report_data(api_key: str = "") -> dict[str, Any]:
     return {
         "app_id": _app_id,
-        "api_key": _prefs_mod.prefs.api_key,
+        "api_key": api_key or _effective_api_key(),
         "addon_version": ADDON_VERSION,
         "platform_version": platform.platform(),
     }
@@ -344,7 +353,7 @@ def _minimal_report_data() -> dict[str, Any]:
 def _prefs_block() -> dict[str, Any]:
     """The ``PREFS`` block the Go client embeds in every search/download task."""
     return {
-        "api_key": _prefs_mod.prefs.api_key,
+        "api_key": _effective_api_key(),
         "api_key_refresh": "",
         "api_key_timeout": 0,
         "scene_id": "",
@@ -477,6 +486,37 @@ def register_task_callback(task_id: str, callback: Callable[[dict[str, Any]], No
         _task_callbacks[task_id] = callback
 
 
+LoginCallback = Callable[[dict[str, Any], str, str], None]
+"""(result_dict, status, message) - status is 'finished' or 'error'."""
+
+ProfileCallback = Callable[[dict[str, Any], str, str], None]
+"""(result_dict, status, message) - status is 'finished' or 'error'."""
+
+_login_lock = threading.Lock()
+_login_cb: LoginCallback | None = None
+_profile_lock = threading.Lock()
+_profile_cb: ProfileCallback | None = None
+
+
+def set_login_callback(cb: LoginCallback | None) -> None:
+    """Register the callback invoked when a ``login`` task is reported.
+
+    Only one callback is active at a time - used by :mod:`bk_unreal.core.auth`.
+    """
+    global _login_cb
+    with _login_lock:
+        _login_cb = cb
+
+
+def set_profile_callback(cb: ProfileCallback | None) -> None:
+    """Register the callback invoked when a ``profiles/get_user_profile`` task
+    is reported. Only one callback is active at a time.
+    """
+    global _profile_cb
+    with _profile_lock:
+        _profile_cb = cb
+
+
 def register_thumbnail_callback(callback: Callable[[str, str], None] | None) -> None:
     """Register a global ``(asset_base_id, image_path)`` thumbnail sink.
 
@@ -549,6 +589,30 @@ def _drain_report(report: list[dict[str, Any]]) -> None:
                 log.error("Proxor callback raised for %s: %s", base_id, exc)
             continue
 
+        if task_type == "login":
+            with _login_lock:
+                cb_login = _login_cb
+            if cb_login is None:
+                continue
+            try:
+                cb_login(task.get("result") or {}, task.get("status", ""), task.get("message", ""))
+            except Exception as exc:
+                log.error("Login callback raised: %s", exc)
+            continue
+
+        if task_type == "profiles/get_user_profile":
+            if task.get("status") not in ("finished", "error"):
+                continue
+            with _profile_lock:
+                cb_profile = _profile_cb
+            if cb_profile is None:
+                continue
+            try:
+                cb_profile(task.get("result") or {}, task.get("status", ""), task.get("message", ""))
+            except Exception as exc:
+                log.error("Profile callback raised: %s", exc)
+            continue
+
         task_id = task.get("task_id", "")
         cb_task = callbacks.get(task_id)
         if cb_task is None:
@@ -609,7 +673,7 @@ def asset_search(query: dict[str, Any], tempdir: str, callback: Callable[[dict[s
         "PREFS": _prefs_block(),
         "addon_version": ADDON_VERSION,
         "platform_version": platform.platform(),
-        "api_key": _prefs_mod.prefs.api_key,
+        "api_key": _effective_api_key(),
         "app_id": _app_id,
         "asset_type": asset_type,
         "blender_version": "0.0.0",  # client just echoes this back
@@ -661,7 +725,7 @@ def asset_prxc_download(
         "PREFS": _prefs_block(),
         "addon_version": ADDON_VERSION,
         "platform_version": platform.platform(),
-        "api_key": _prefs_mod.prefs.api_key,
+        "api_key": _effective_api_key(),
         "app_id": _app_id,
         "assetBaseId": asset_base_id,
         "download_url": download_url,
@@ -673,6 +737,44 @@ def asset_prxc_download(
         raise RuntimeError(f"Unexpected /asset_prxc_download response: {resp!r}")
     _start_poller()
     return str(resp["task_id"])
+
+
+# ── OAuth ─────────────────────────────────────────────────────────────────────
+
+
+def send_oauth_verification_data(code_verifier: str, state: str) -> None:
+    """Hand the PKCE verifier + state to the client so it can complete the
+    redirect-callback exchange when the browser hits ``/consumer/exchange/``.
+    """
+    body = _minimal_report_data()
+    body["code_verifier"] = code_verifier
+    body["state"] = state
+    _http_request("POST", f"{get_base_url()}/oauth2/verification_data", body=body)
+
+
+def refresh_token(refresh_token_str: str, old_api_key: str = "") -> None:
+    """Ask the client to refresh *refresh_token_str*. The new tokens come back
+    as a ``login`` task on ``/report``.
+    """
+    body = _minimal_report_data(api_key=old_api_key)
+    body["refresh_token"] = refresh_token_str
+    _http_request("GET", f"{get_base_url()}/refresh_token", body=body)
+
+
+def oauth2_logout(refresh_token_str: str, api_key: str = "") -> None:
+    """Revoke tokens on the server via the client."""
+    body = _minimal_report_data(api_key=api_key)
+    body["refresh_token"] = refresh_token_str
+    _http_request("GET", f"{get_base_url()}/oauth2/logout", body=body)
+
+
+def get_user_profile(api_key: str = "") -> None:
+    """Ask the client to fetch the logged-in user's profile.
+
+    The result arrives on ``/report`` as a ``profiles/get_user_profile`` task.
+    """
+    body = _minimal_report_data(api_key=api_key)
+    _http_request("GET", f"{get_base_url()}/profiles/get_user_profile", body=body)
 
 
 # ── Shutdown ─────────────────────────────────────────────────────────────────
