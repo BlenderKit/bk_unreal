@@ -533,34 +533,20 @@ _BOX_EDGES = (
     (2, 6), (3, 7), (4, 5), (4, 6), (5, 7), (6, 7),
 )  # fmt: skip
 
-_Transform = tuple[tuple[float, float, float], float, float, float]
+_Transform = tuple[tuple[float, float, float], float]
 
 
-def _rotate_x(y: float, z: float, degrees: float) -> tuple[float, float]:
-    rad = math.radians(degrees)
-    cos_r, sin_r = math.cos(rad), math.sin(rad)
-    return y * cos_r - z * sin_r, y * sin_r + z * cos_r
-
-
-def _local_to_world(
-    pt: tuple,
-    loc: tuple,
-    rot_z_deg: float,
-    basis_rot_x_deg: float = 0.0,
-    basis_rot_z_deg: float = 0.0,
-) -> tuple[float, float, float]:
+def _local_to_world(pt: tuple, loc: tuple, rot_z_deg: float) -> tuple[float, float, float]:
     x, y, z = pt
-    if basis_rot_x_deg % 360:
-        y, z = _rotate_x(y, z, basis_rot_x_deg)
-    rad = math.radians(basis_rot_z_deg + rot_z_deg)
+    rad = math.radians(rot_z_deg)
     cos_r, sin_r = math.cos(rad), math.sin(rad)
     x, y = x * cos_r - y * sin_r, x * sin_r + y * cos_r
     return (loc[0] + x, loc[1] + y, loc[2] + z)
 
 
 def _transform_point(pt: tuple, transform: _Transform) -> tuple[float, float, float]:
-    loc, rotation_z, basis_rotation_x, basis_rotation_z = transform
-    return _local_to_world(pt, loc, rotation_z, basis_rotation_x, basis_rotation_z)
+    loc, rotation_z = transform
+    return _local_to_world(pt, loc, rotation_z)
 
 
 _warned_no_units_per_pixel = False
@@ -620,10 +606,8 @@ def update_preview_actor(_actor: Any, state: Any) -> None:
     upp = _units_per_pixel(unreal_mod, state.location)
     box_thickness = max(_MIN_WORLD_THICKNESS, _BOX_THICKNESS_PX * upp)
     proxor_thickness = max(_MIN_WORLD_THICKNESS, _PROXOR_LINE_THICKNESS_PX * upp)
-    basis_rotation_x = float(getattr(state, "basis_rotation_x", 0.0))
-    basis_rotation_z = float(getattr(state, "basis_rotation_z", 0.0))
     rotation_z = float(state.rotation_z)
-    transform = (state.location, rotation_z, basis_rotation_x, basis_rotation_z)
+    transform = (state.location, rotation_z)
 
     corners = [_transform_point(p, transform) for p in _bbox_corners(state.bbox_min, state.bbox_max)]
     for a, b in _BOX_EDGES:

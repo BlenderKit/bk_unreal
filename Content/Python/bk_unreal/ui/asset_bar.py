@@ -337,6 +337,7 @@ class AssetBarWidget(QWidget):
     _search_ready = Signal(object)
     _more_ready = Signal(object)
     _thumb_ready = Signal(str, str)
+    _search_failed = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -354,6 +355,7 @@ class AssetBarWidget(QWidget):
         self._search_ready.connect(self._apply_search_task)
         self._more_ready.connect(self._apply_more_task)
         self._thumb_ready.connect(self._set_thumbnail)
+        self._search_failed.connect(self._on_search_failed)
         self._build_ui()
         client_lib.register_thumbnail_callback(self._on_thumbnail)
 
@@ -414,10 +416,14 @@ class AssetBarWidget(QWidget):
         query = bk_search.build_query(asset_type=self._asset_type, search_text=self._search_text)
         self.status.setText("Searching…")
 
-        task_id = client_lib.asset_search(query, self._tempdir, self._on_search_task)
-        if task_id is None:
-            self._loading = False
-            self.status.setText("Blendkit client not available. Build it with `python dev.py build`.")
+        client_lib.asset_search_async(
+            query,
+            self._tempdir,
+            self._on_search_task,
+            on_failed=lambda: self._search_failed.emit(
+                "Blendkit client not available. Build it with `python dev.py build`."
+            ),
+        )
 
     def _clear_grid(self) -> None:
         while self.grid.count():
@@ -463,9 +469,17 @@ class AssetBarWidget(QWidget):
         self.status.setText(f"{len(self._tile_order)} results — loading more…")
         query = bk_search.build_query(asset_type=self._asset_type, search_text=self._search_text)
         query["next"] = self._next_url
-        task_id = client_lib.asset_search(query, self._tempdir, self._on_more_task)
-        if task_id is None:
-            self._loading = False
+        client_lib.asset_search_async(
+            query,
+            self._tempdir,
+            self._on_more_task,
+            on_failed=lambda: self._search_failed.emit(""),
+        )
+
+    def _on_search_failed(self, message: str) -> None:
+        self._loading = False
+        if message:
+            self.status.setText(message)
 
     # ── Client callbacks (report-poll thread) ────────────────────────────────
 

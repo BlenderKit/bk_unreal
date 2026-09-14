@@ -90,6 +90,41 @@ def _register_menu() -> None:
     menus.refresh_all_widgets()
 
 
+def _warm_start_ui() -> None:
+    """Pre-import Qt and build the QApplication so the first menu click is fast.
+
+    Importing PySide6 and creating the ``QApplication`` costs a noticeable
+    pause; doing it here (on the editor thread, a few frames after startup)
+    moves that cost off the user's first *Open Asset Bar* click.
+    """
+    try:
+        from .core.qt_host import get_qapp
+        from .ui import asset_bar  # noqa: F401  (import cost is the point)
+
+        get_qapp()
+    except Exception as exc:
+        log.debug("Qt warm start skipped: %s", exc)
+
+
+def _schedule_warm_start(delay_seconds: float = 3.0) -> None:
+    """Run :func:`_warm_start_ui` once, *delay_seconds* into the editor's tick."""
+    import unreal
+
+    state = {"elapsed": 0.0, "handle": None}
+
+    def _tick(delta_seconds: float) -> None:
+        state["elapsed"] += delta_seconds
+        if state["elapsed"] < delay_seconds:
+            return
+        handle = state["handle"]
+        if handle is not None:
+            unreal.unregister_slate_post_tick_callback(handle)
+            state["handle"] = None
+        _warm_start_ui()
+
+    state["handle"] = unreal.register_slate_post_tick_callback(_tick)
+
+
 def register() -> None:
     """Configure logging and build the editor menu (idempotent)."""
     global _registered
@@ -103,6 +138,18 @@ def register() -> None:
         _register_menu()
     except Exception as exc:
         log.error("Menu registration failed: %s", exc)
+
+    try:
+        from .core import client_lib
+
+        client_lib.warm_up()
+    except Exception as exc:
+        log.debug("Client warm-up skipped: %s", exc)
+
+    try:
+        _schedule_warm_start()
+    except Exception as exc:
+        log.debug("Warm start scheduling skipped: %s", exc)
 
     _registered = True
     log.info("Blendkit for Unreal registered.")

@@ -23,7 +23,7 @@ def test_import_stage_matches_preview_yaw_and_identity_scale(tmp_path, monkeypat
     unreal = SimpleNamespace()
     unreal.UsdStageActor = object
     unreal.Vector = lambda x, y, z: (x, y, z)
-    unreal.Rotator = lambda pitch, yaw, roll: (pitch, yaw, roll)
+    unreal.Rotator = lambda roll=0.0, pitch=0.0, yaw=0.0: (roll, pitch, yaw)
 
     def spawn_actor_from_class(actor_class, location, rotator):
         spawned["actor_class"] = actor_class
@@ -44,5 +44,5 @@ def test_import_stage_matches_preview_yaw_and_identity_scale(tmp_path, monkeypat
     assert isinstance(actor, Actor)
     assert spawned["root_layer"] == str(stage_path)
     assert spawned["location"] == (10.0, 20.0, 30.0)
-    assert spawned["rotator"] == (0.0, 45.0, 0.0)
+    assert spawned["rotator"] == (0.0, 0.0, 225.0)
     assert spawned["scale"] == (1.0, 1.0, 1.0)

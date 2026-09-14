@@ -23,6 +23,7 @@ This module owns:
 from __future__ import annotations
 
 import atexit
+import concurrent.futures
 import json
 import logging
 import os
@@ -79,12 +80,19 @@ REQUEST_TIMEOUT = 5.0
 
 # ── Module state ─────────────────────────────────────────────────────────────
 
-_state_lock = threading.Lock()
+# Reentrant: auth helpers reached from inside a locked section may call back
+# into ensure_running().
+_state_lock = threading.RLock()
 _process: subprocess.Popen | None = None
 _active_port: str = CLIENT_PORTS[0]
 _app_id: int = os.getpid()
 _port_index: int = 0
 _use_inplace_client: bool = False
+
+# Set once a client answered on ``_active_port``; lets ensure_running() skip the
+# (slow) full port sweep. Cleared by the poller after repeated failures.
+_client_ready: bool = False
+_warm_up_started: bool = False
 
 # task-id → callback registry, drained by the report poller.
 _task_callbacks: dict[str, Callable[[dict[str, Any]], None]] = {}
@@ -179,17 +187,41 @@ def _binary_name() -> str:
     return name
 
 
+def _has_client_binary(root: str) -> bool:
+    """True when *root* holds a ``vX.Y.Z/`` folder with a binary for this platform."""
+    binary = _binary_name()
+    try:
+        entries = os.listdir(root)
+    except OSError:
+        return False
+    return any(
+        _parse_version(entry) is not None and os.path.isfile(os.path.join(root, entry, binary)) for entry in entries
+    )
+
+
 def _client_binaries_root() -> str:
     """Directory that holds the ``vX.Y.Z/`` client-binary folders.
 
     Packaged plugin: ``<root>/client``. Source checkout: the ``bk_client``
-    submodule at ``<root>/bk_client/client``.
+    submodule at ``<root>/bk_client/client``. ``BK_UNREAL_CLIENT_DIR`` overrides
+    both. A candidate is only accepted if it actually contains a binary for this
+    platform, so a stale/empty ``client/`` (``dev.py client`` wipes it before
+    rebuilding) does not shadow the submodule copy.
+
+    Returns:
+        The chosen directory; the packaged path when nothing usable was found.
     """
+    override = os.environ.get("BK_UNREAL_CLIENT_DIR", "").strip()
+    if override:
+        return os.path.abspath(override)
+
     root = _addon_root()
     packaged = os.path.join(root, "client")
-    if os.path.isdir(packaged):
-        return packaged
-    return os.path.join(root, "bk_client", "client")
+    submodule = os.path.join(root, "bk_client", "client")
+    for candidate in (packaged, submodule):
+        if _has_client_binary(candidate):
+            return candidate
+    return packaged
 
 
 def _parse_version(name: str) -> tuple[int, ...] | None:
@@ -234,13 +266,15 @@ def _detect_client_version() -> str:
 
     if best is not None:
         _client_version_cache = best[1]
-    else:
-        try:
-            with open(os.path.join(binaries_root, "VERSION"), encoding="utf-8") as fh:
-                _client_version_cache = f"v{fh.read().strip()}"
-        except OSError:
-            _client_version_cache = DEFAULT_CLIENT_VERSION
-    return _client_version_cache
+        return _client_version_cache
+
+    try:
+        with open(os.path.join(binaries_root, "VERSION"), encoding="utf-8") as fh:
+            detected = f"v{fh.read().strip()}"
+    except OSError:
+        detected = DEFAULT_CLIENT_VERSION
+    # Not cached: this is a guess, and a rebuild may land the real folder later.
+    return detected
 
 
 def _api_version() -> str:
@@ -361,10 +395,22 @@ def _effective_api_key() -> str:
     return auth.get_api_key() or _prefs_mod.prefs.api_key
 
 
-def _minimal_report_data(api_key: str = "") -> dict[str, Any]:
+def _minimal_report_data(api_key: str = "", *, use_auth: bool = True) -> dict[str, Any]:
+    """Build the tiny payload every ``/report`` poll carries.
+
+    Args:
+        api_key: Explicit key to send; resolved from auth when empty.
+        use_auth: When ``False``, never touch :mod:`bk_unreal.core.auth`. Liveness
+            probes must set this - auth can call back into :func:`ensure_running`.
+
+    Returns:
+        The report request body.
+    """
+    if not api_key and use_auth:
+        api_key = _effective_api_key()
     return {
         "app_id": _app_id,
-        "api_key": api_key or _effective_api_key(),
+        "api_key": api_key,
         "addon_version": ADDON_VERSION,
         "platform_version": platform.platform(),
     }
@@ -397,7 +443,7 @@ def _ping(port: str) -> bool:
         _http_request(
             "GET",
             f"http://127.0.0.1:{port}/{_api_version()}/report",
-            body=_minimal_report_data(),
+            body=_minimal_report_data(use_auth=False),
             connect_timeout=POLL_CONNECT_TIMEOUT,
             read_timeout=POLL_READ_TIMEOUT,
         )
@@ -407,8 +453,19 @@ def _ping(port: str) -> bool:
 
 
 def _find_running_client() -> str | None:
-    for port in CLIENT_PORTS:
-        if _ping(port):
+    """Probe every known port in parallel and return the first that answers.
+
+    Sequential probing costs up to ``len(CLIENT_PORTS) * POLL_READ_TIMEOUT``
+    (~4 s) before concluding no client is up, which is far too long to sit on
+    the caller's thread. Probing concurrently caps that at one timeout.
+
+    Returns:
+        The lowest-priority-index port that answered, or ``None``.
+    """
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(CLIENT_PORTS)) as pool:
+        answered = list(pool.map(_ping, CLIENT_PORTS))
+    for port, ok in zip(CLIENT_PORTS, answered):
+        if ok:
             return port
     return None
 
@@ -461,12 +518,21 @@ def ensure_running() -> str | None:
     First reuse any running client, then reuse our own live subprocess, then
     spawn a new one, rotating through :data:`CLIENT_PORTS` on repeated failures.
     """
-    global _process, _active_port, _port_index
+    global _process, _active_port, _port_index, _client_ready
+
+    # Fast path: a client already answered and the poller has not seen it die.
+    if _client_ready:
+        return _active_port
 
     with _state_lock:
+        if _client_ready:
+            return _active_port
+
         running = _find_running_client()
         if running is not None:
             _active_port = running
+            _client_ready = True
+            _start_poller()
             return running
 
         if _client_process_alive():
@@ -488,6 +554,7 @@ def ensure_running() -> str | None:
             for _attempt in range(20):
                 if _ping(port):
                     _active_port = port
+                    _client_ready = True
                     _start_poller()
                     return port
                 if not _client_process_alive():
@@ -647,6 +714,9 @@ def _drain_report(report: list[dict[str, Any]]) -> None:
 
 
 def _poll_loop() -> None:
+    global _client_ready
+
+    failures = 0
     while not _poller_stop.is_set():
         try:
             report = _http_request(
@@ -656,10 +726,15 @@ def _poll_loop() -> None:
                 connect_timeout=POLL_CONNECT_TIMEOUT,
                 read_timeout=REQUEST_TIMEOUT,
             )
+            failures = 0
+            _client_ready = True
             if isinstance(report, list):
                 _drain_report(report)
         except Exception:
-            pass
+            failures += 1
+            # Tolerate a couple of dropped polls before forcing a re-discovery.
+            if failures >= 3:
+                _client_ready = False
         _poller_stop.wait(0.5)
 
 
@@ -670,6 +745,27 @@ def _start_poller() -> None:
     _poller_stop.clear()
     _poller_thread = threading.Thread(target=_poll_loop, name="bk_unreal-report-poll", daemon=True)
     _poller_thread.start()
+
+
+def warm_up() -> None:
+    """Locate/launch the client on a background thread (call at plugin start).
+
+    Doing this eagerly means the first search does not pay the port-discovery
+    and process-spawn latency on the user's click.
+    """
+    global _warm_up_started
+    with _state_lock:
+        if _warm_up_started:
+            return
+        _warm_up_started = True
+
+    def _worker() -> None:
+        try:
+            ensure_running()
+        except Exception as exc:
+            log.debug("Client warm-up failed: %s", exc)
+
+    threading.Thread(target=_worker, name="bk_unreal-client-warmup", daemon=True).start()
 
 
 # ── Search ───────────────────────────────────────────────────────────────────
@@ -722,6 +818,40 @@ def asset_search(query: dict[str, Any], tempdir: str, callback: Callable[[dict[s
     register_task_callback(task_id, callback)
     _start_poller()
     return task_id
+
+
+def asset_search_async(
+    query: dict[str, Any],
+    tempdir: str,
+    callback: Callable[[dict[str, Any]], None],
+    *,
+    on_failed: Callable[[], None] | None = None,
+) -> None:
+    """Run :func:`asset_search` on a worker thread so the caller never blocks.
+
+    Launching/discovering the client and the POST itself are network calls that
+    must never run on the Unreal editor (Qt GUI) thread.
+
+    Args:
+        query: Search parameters, as built by :func:`bk_unreal.core.search.build_query`.
+        tempdir: Directory the client writes thumbnails into.
+        callback: Invoked on the report-poll thread for each task update.
+        on_failed: Invoked on the worker thread when no task could be started.
+    """
+
+    def _worker() -> None:
+        try:
+            task_id = asset_search(query, tempdir, callback)
+        except Exception as exc:
+            log.error("asset_search failed: %s", exc)
+            task_id = None
+        if task_id is None and on_failed is not None:
+            try:
+                on_failed()
+            except Exception:
+                log.exception("asset_search failure callback raised")
+
+    threading.Thread(target=_worker, name="bk_unreal-asset-search", daemon=True).start()
 
 
 def asset_prxc_download(
@@ -915,7 +1045,10 @@ def get_user_profile(api_key: str = "") -> None:
 
 def shutdown() -> None:
     """Stop the poller and terminate a client we spawned."""
+    global _client_ready
+
     _poller_stop.set()
+    _client_ready = False
     with _state_lock:
         if _client_process_alive() and _process is not None:
             try:

@@ -128,6 +128,7 @@ class DownloadController:
         drop_location: tuple[float, float, float],
         drop_normal: tuple[float, float, float],
         drop_rotation_z: float,
+        drop_pivot_offset: tuple[float, float, float] = (0.0, 0.0, 0.0),
         progress_callback: Callable[[float, str], None] | None = None,
         finished_callback: Callable[[bool, str], None] | None = None,
     ) -> None:
@@ -135,6 +136,7 @@ class DownloadController:
         self.drop_location = drop_location
         self.drop_normal = drop_normal
         self.drop_rotation_z = drop_rotation_z
+        self.drop_pivot_offset = drop_pivot_offset
         self.asset_id = str(asset_data.get("assetBaseId") or asset_data.get("id") or "")
         self.model_dir = model_cache_dir(asset_data, prefs.prefs.resolution)
         self.started = False
@@ -200,6 +202,7 @@ class DownloadController:
                     location=self.drop_location,
                     normal=self.drop_normal,
                     rotation_z=self.drop_rotation_z,
+                    pivot_offset=self.drop_pivot_offset,
                 )
             except BaseException as exc:
                 failure.append(exc)

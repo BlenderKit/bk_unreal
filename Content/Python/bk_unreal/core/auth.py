@@ -136,6 +136,12 @@ def _on_login_task(result: dict[str, Any], status: str, message: str) -> None:
     else:
         _login_error = message or "Login failed"
         log.error("Login task failed: %s", _login_error)
+        # A rejected refresh token can never recover; drop it so search and the
+        # rest of the plugin fall back to anonymous instead of sending a dead key.
+        if "refresh token" in _login_error.lower() and ("400" in _login_error or "401" in _login_error):
+            log.warning("Refresh token rejected by the server; clearing stored credentials.")
+            _clear_tokens()
+            _invalidate_user_id()
 
     with _refresh_lock:
         _refresh_inflight = False
@@ -212,11 +218,15 @@ def fetch_profile() -> None:
     api_key = get_api_key()
     if not api_key:
         return
-    try:
-        client_lib.ensure_running()
-        client_lib.get_user_profile(api_key)
-    except Exception as exc:
-        log.warning("Could not request user profile: %s", exc)
+
+    def _worker() -> None:
+        try:
+            client_lib.ensure_running()
+            client_lib.get_user_profile(api_key)
+        except Exception as exc:
+            log.warning("Could not request user profile: %s", exc)
+
+    threading.Thread(target=_worker, name="bk_unreal-profile-fetch", daemon=True).start()
 
 
 def get_user_id() -> int | None:
@@ -255,14 +265,20 @@ def _request_refresh(refresh: str, old_api_key: str) -> None:
         if _refresh_inflight:
             return
         _refresh_inflight = True
-    try:
-        client_lib.ensure_running()
-        client_lib.refresh_token(refresh, old_api_key)
-        log.info("Token refresh requested via client.")
-    except Exception as exc:
-        with _refresh_lock:
-            _refresh_inflight = False
-        log.warning("Token refresh request failed: %s", exc)
+
+    def _worker() -> None:
+        global _refresh_inflight
+        try:
+            client_lib.ensure_running()
+            client_lib.refresh_token(refresh, old_api_key)
+            log.info("Token refresh requested via client.")
+        except Exception as exc:
+            with _refresh_lock:
+                _refresh_inflight = False
+            log.warning("Token refresh request failed: %s", exc)
+
+    # Never on the caller's thread: get_api_key() runs on the Qt/editor thread.
+    threading.Thread(target=_worker, name="bk_unreal-token-refresh", daemon=True).start()
 
 
 def login(timeout: float = 180.0) -> bool:
@@ -329,18 +345,24 @@ def login_async(on_done: Callable[[bool], None], timeout: float = 180.0) -> None
 
 
 def logout() -> None:
-    """Revoke tokens on the server and clear local storage."""
+    """Clear local tokens and revoke them on the server in the background."""
     tokens = _load_tokens()
     refresh = tokens.get("refresh_token", "")
     access = tokens.get("access_token", "")
-    if refresh:
-        try:
-            client_lib.ensure_running()
-            client_lib.oauth2_logout(refresh, access)
-        except Exception as exc:
-            log.warning("Client-side logout failed: %s", exc)
+    # Clear locally first so the UI updates immediately and the revoke worker
+    # can't be blocked by, or block, anything on the caller's thread.
     _clear_tokens()
     _invalidate_user_id()
+    if refresh:
+
+        def _worker() -> None:
+            try:
+                client_lib.ensure_running()
+                client_lib.oauth2_logout(refresh, access)
+            except Exception as exc:
+                log.warning("Client-side logout failed: %s", exc)
+
+        threading.Thread(target=_worker, name="bk_unreal-oauth-logout", daemon=True).start()
     try:
         from . import bookmarks
 

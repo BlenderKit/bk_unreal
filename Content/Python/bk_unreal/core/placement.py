@@ -30,15 +30,15 @@ log = logging.getLogger(__name__)
 
 WHEEL_STEP = 5.0  # degrees per wheel notch
 
-# ``bk_proxor._unreal.draw`` already expands PRX into Unreal Z-up centimetres.
-# Keep the proxor's coordinate-system difference as a draw transform only:
-# default proxor forward Y+ -> Unreal X+.
-_PROXOR_BASIS_ROTATION_X_DEG = -90.0
-_PROXOR_BASIS_ROTATION_Z_DEG = -90.0
+# ``bk_proxor._unreal.draw`` already expands PRX into Unreal Z-up centimetres
+# with only a Y mirror (its raw frame is documented as Z-up/Y-front already -
+# see ``prx_to_arrow_segments``'s docstring), so no extra basis rotation is
+# applied here on top of it - a previous version rotated the proxor -90 deg
+# about X/Z at draw time, which fought that already-correct frame and made
+# the hologram land far outside the drop point (effectively invisible).
 
-# Set False if the hologram is still front/back (or left/right) mirrored
-# relative to the placed asset after the X-rotation above - a mirror can't
-# be fixed by rotation alone.
+# Set False if the hologram is front/back (or left/right) mirrored relative
+# to the placed asset - a mirror can't be fixed by rotation alone.
 _PROXOR_FLIP_Y = True
 
 
@@ -62,8 +62,7 @@ class _State:
     proxor_lines: list = field(default_factory=list)
     proxor_mesh: list = field(default_factory=list)
     arrow_lines: list = field(default_factory=list)
-    basis_rotation_x: float = 0.0
-    basis_rotation_z: float = 0.0
+    pivot_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
     downloading: bool = False
     download_progress: float = 0.0
     download_status: str = ""
@@ -178,8 +177,26 @@ def _coerce_bbox(v: Any, default: tuple[float, float, float], scale: float) -> t
         return default
 
 
-def _asset_bbox(asset_data: dict[str, Any]) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
-    """Return fallback ``(bbox_min, bbox_max)`` from search data in Unreal cm."""
+def _recenter_bottom_center(
+    bbox_min: tuple[float, float, float],
+    bbox_max: tuple[float, float, float],
+) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
+    """Recenter an AABB so its pivot is bottom-center (X/Y centered, Z floor = 0).
+
+    Returns ``(bbox_min, bbox_max, pivot_offset)``. *pivot_offset* is the
+    bottom-center point's position in the ORIGINAL (un-recentered) space -
+    i.e. how far the asset's own origin sits from the bottom-center pivot
+    the drag preview shows. Used later to translate the imported actor onto
+    the exact point the green preview box promised (see ``usd_import``).
+    """
+    offset = ((bbox_min[0] + bbox_max[0]) * 0.5, (bbox_min[1] + bbox_max[1]) * 0.5, bbox_min[2])
+    new_min = tuple(bbox_min[i] - offset[i] for i in range(3))
+    new_max = tuple(bbox_max[i] - offset[i] for i in range(3))
+    return new_min, new_max, offset
+
+
+def _asset_bbox_raw(asset_data: dict[str, Any]) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    """Return the asset's bbox in Unreal cm, axis-converted but NOT recentered."""
     scale = _meters_to_internal()
     default_min = (-0.5 * scale, -0.5 * scale, 0.0)
     default_max = (0.5 * scale, 0.5 * scale, 1.0 * scale)
@@ -208,22 +225,48 @@ def _asset_bbox(asset_data: dict[str, Any]) -> tuple[tuple[float, float, float],
     return out_min, out_max
 
 
-def _preview_from_payload(
-    prxc: dict[str, Any],
-    fallback_bbox_min: tuple[float, float, float],
-    fallback_bbox_max: tuple[float, float, float],
-) -> tuple[tuple[float, float, float], tuple[float, float, float], list, list, list, float, float]:
-    if prxc.get("bbox_min") and prxc.get("bbox_max"):
-        return (
-            prxc["bbox_min"],
-            prxc["bbox_max"],
-            prxc.get("lines", []),
-            prxc.get("mesh", []),
-            prxc.get("arrow", []),
-            _PROXOR_BASIS_ROTATION_X_DEG,
-            _PROXOR_BASIS_ROTATION_Z_DEG,
-        )
-    return fallback_bbox_min, fallback_bbox_max, [], [], [], 0.0, 0.0
+def _asset_bbox(asset_data: dict[str, Any]) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    """Return fallback ``(bbox_min, bbox_max)`` from search data, bottom-center pivot."""
+    bbox_min, bbox_max, _offset = _recenter_bottom_center(*_asset_bbox_raw(asset_data))
+    return bbox_min, bbox_max
+
+
+def _asset_bbox_with_pivot(
+    asset_data: dict[str, Any],
+) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
+    """Return ``(bbox_min, bbox_max, pivot_offset)``, see :func:`_recenter_bottom_center`."""
+    return _recenter_bottom_center(*_asset_bbox_raw(asset_data))
+
+
+def _preview_from_payload(prxc: dict[str, Any]) -> tuple[list, list]:
+    """Return the proxor's own ``(lines, mesh)`` to draw inside the asset bbox.
+
+    The asset-supplied bbox (see :func:`_asset_bbox_with_pivot`) is always the
+    authoritative placement bounds - the proxor is only a preview hologram
+    drawn inside it, never a replacement for it.
+    """
+    return prxc.get("lines", []), prxc.get("mesh", [])
+
+
+def _bbox_arrow(
+    bbox_min: tuple[float, float, float],
+    bbox_max: tuple[float, float, float],
+) -> list[list[tuple[float, float, float]]]:
+    """Front-facing arrow built straight from the bbox's own front-bottom corners.
+
+    Deriving this from the proxor's raw mesh space was tried before and
+    produced wildly-out-of-proportion tips on real (non-cube) assets, making
+    it invisible - the bbox is already correct, so building the arrow
+    directly from it is both simpler and robust regardless of proxor data.
+    """
+    width = bbox_max[0] - bbox_min[0]
+    if width <= 0:
+        return []
+    floor_z = bbox_min[2]
+    left = (bbox_min[0], bbox_min[1], floor_z)
+    right = (bbox_max[0], bbox_min[1], floor_z)
+    tip = ((bbox_min[0] + bbox_max[0]) * 0.5, bbox_min[1] - width * 0.5, floor_z)
+    return [[left, tip], [right, tip]]
 
 
 class DragSession:
@@ -250,13 +293,10 @@ class DragSession:
             log.debug("DragSession already active; ignoring start()")
             return
 
-        bbox_min, bbox_max = _asset_bbox(asset_data)
+        bbox_min, bbox_max, pivot_offset = _asset_bbox_with_pivot(asset_data)
         prxc = _load_proxor_payload(asset_data)
-        bbox_min, bbox_max, lines, mesh, arrow, basis_rotation_x, basis_rotation_z = _preview_from_payload(
-            prxc,
-            bbox_min,
-            bbox_max,
-        )
+        lines, mesh = _preview_from_payload(prxc)
+        arrow = _bbox_arrow(bbox_min, bbox_max)
         _active_state = _State(
             asset_data=asset_data,
             thumb_path=thumb_path,
@@ -266,8 +306,7 @@ class DragSession:
             proxor_lines=lines,
             proxor_mesh=mesh,
             arrow_lines=arrow,
-            basis_rotation_x=basis_rotation_x,
-            basis_rotation_z=basis_rotation_z,
+            pivot_offset=pivot_offset,
         )
         log.info("Drag start: asset=%s bbox_min=%s bbox_max=%s", asset_data.get("name", "?"), bbox_min, bbox_max)
         log.debug(
@@ -332,6 +371,7 @@ class DragSession:
                 drop_location=state.location,
                 drop_normal=state.surface_normal,
                 drop_rotation_z=state.rotation_z,
+                drop_pivot_offset=state.pivot_offset,
                 progress_callback=self._on_download_progress,
                 finished_callback=self._on_download_finished,
             )
@@ -383,23 +423,12 @@ class DragSession:
         if not _active_state.active:
             return
         payload = _parse_prxc(prxc_path)
-        bbox_min, bbox_max, lines, mesh, arrow, basis_rotation_x, basis_rotation_z = _preview_from_payload(
-            payload,
-            _active_state.bbox_min,
-            _active_state.bbox_max,
-        )
+        lines, mesh = _preview_from_payload(payload)
         if not lines and not mesh:
             return
-        _active_state.bbox_min = bbox_min
-        _active_state.bbox_max = bbox_max
         _active_state.proxor_lines = lines
         _active_state.proxor_mesh = mesh
-        _active_state.arrow_lines = arrow
-        _active_state.basis_rotation_x = basis_rotation_x
-        _active_state.basis_rotation_z = basis_rotation_z
-        log.info(
-            "[PROXOR] live swap-in: %d segments, %d mesh-verts, %d arrow segments", len(lines), len(mesh), len(arrow)
-        )
+        log.info("[PROXOR] live swap-in: %d segments, %d mesh-verts", len(lines), len(mesh))
 
     # ── Poll tick ────────────────────────────────────────────────────────
 
