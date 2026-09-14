@@ -14,26 +14,35 @@ Commands
 --------
     python dev.py vendor      Download pure-Python deps (qtpy, packaging,
                               requests) into Content/Python/bk_unreal/lib.
-    python dev.py build       Vendor + build the local client + write a
-                              version stamp + zip the plugin into out/.
+    python dev.py build       Vendor + build the local (unsigned) client +
+                              write a version stamp + zip the plugin into out/.
     python dev.py client      Build only the local client binaries (add
                               ``--update`` to pull the latest submodule first).
     python dev.py stamp       Write Content/Python/bk_unreal/_build_version.py.
+    python dev.py release     Vendor + download the *signed* bk_client release
+                              (or unpack --client-build <bk_client.zip>) +
+                              stamp + zip. Used by the GitHub Release workflow.
 
 The Go ``blendkit-client`` lives in its own repo, embedded here as the
 ``bk_client`` git submodule (see .gitmodules). ``build`` delegates the compile
 to ``bk_client/dev.py`` and unpacks the resulting bundle into ``client/`` — the
-exact layout the runtime scans (see core/client_lib.py). Mirrors bk_maya/dev.py.
+exact layout the runtime scans (see core/client_lib.py). ``release`` instead
+downloads the code-signed/notarized binaries published on the bk_client
+GitHub releases (signing happens in that repo's CI, never locally). Mirrors
+bk_maya/dev.py.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.request
 import zipfile
 from datetime import datetime, timezone
 
@@ -41,9 +50,17 @@ REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 PKG_DIR = os.path.join(REPO_ROOT, "Content", "Python", "bk_unreal")
 LIB_DIR = os.path.join(PKG_DIR, "lib")
 OUT_DIR = os.path.join(REPO_ROOT, "out")
+CLIENT_DIR = os.path.join(REPO_ROOT, "client")
 
 CLIENT_SUBMODULE_DIR = os.path.join(REPO_ROOT, "bk_client")
 CLIENT_SRC_DIR = os.path.join(CLIENT_SUBMODULE_DIR, "client")
+
+# The bk_client GitHub release the ``release`` command pulls signed binaries
+# from (code-signing/notarization happens in that repo's CI, so we never sign
+# locally). Pass --client-build <bk_client.zip> to use a locally downloaded
+# signed bundle instead of hitting the network. Mirrors bk_maya/dev.py.
+CLIENT_RELEASE_REPO = "BlenderKit/bk_client"
+CLIENT_RELEASE_ASSET = "bk_client.zip"
 
 CHANNEL_STABLE = "stable"
 CHANNEL_ALPHA = "alpha"
@@ -202,6 +219,163 @@ def _extract_client_bundles(client_dir: str) -> None:
         print(f"  Extracted client binaries into {version_dir}")
 
 
+# ── Signed client release download ────────────────────────────────────────────
+# ``build`` compiles the client locally (unsigned, fast dev loop). ``release``
+# instead downloads the *signed* bk_client.zip published on the bk_client
+# GitHub releases, because code-signing/notarization happens in that repo's
+# CI. Mirrors bk_maya/dev.py.
+
+
+def _github_headers() -> dict:
+    """Headers for GitHub API/download requests (honours ``$GITHUB_TOKEN``)."""
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "bk_unreal-dev"}
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def read_client_version_pin() -> str:
+    """Read the pinned Client minor series (e.g. ``v1.12``) from global_vars.py."""
+    global_vars_py = os.path.join(PKG_DIR, "core", "global_vars.py")
+    with open(global_vars_py, encoding="utf-8") as fh:
+        match = re.search(r'^CLIENT_VERSION\s*[:=].*?"([^"]+)"', fh.read(), re.MULTILINE)
+    if not match:
+        raise RuntimeError(f"Could not find CLIENT_VERSION in {global_vars_py}")
+    return match.group(1)
+
+
+def resolve_client_release_tag(pin: str) -> str:
+    """Resolve a version pin to an exact published bk_client release tag.
+
+    - ``vX.Y``   -> the newest published ``vX.Y.Z`` release (bk_client auto-bumps
+      the patch on each merge, so this tracks the latest patch of the series).
+    - ``vX.Y.Z`` -> that exact tag.
+    """
+    parts = pin.lstrip("v").split(".")
+    if len(parts) >= 3:
+        return f"v{'.'.join(parts[:3])}"
+
+    major, minor = parts[0], parts[1]
+    pattern = re.compile(rf"^v{re.escape(major)}\.{re.escape(minor)}\.(\d+)$")
+    api_url = f"https://api.github.com/repos/{CLIENT_RELEASE_REPO}/releases?per_page=100"
+    request = urllib.request.Request(api_url, headers=_github_headers())
+    with urllib.request.urlopen(request) as response:
+        releases = json.load(response)
+
+    matches = []
+    for rel in releases:
+        if rel.get("draft") or rel.get("prerelease"):
+            continue
+        m = pattern.match(rel.get("tag_name", ""))
+        if m:
+            matches.append((int(m.group(1)), rel["tag_name"]))
+    if not matches:
+        raise RuntimeError(f"No published {CLIENT_RELEASE_REPO} release found for series v{major}.{minor}.*")
+    matches.sort()
+    return matches[-1][1]
+
+
+def _unpack_release_bundle(zip_path: str, client_dir: str) -> str:
+    """Unpack a downloaded ``bk_client.zip`` into ``client/vX.Y.Z/`` (same
+    layout ``_extract_client_bundles`` produces from a local build).
+    """
+    with zipfile.ZipFile(zip_path) as zf:
+        names = set(zf.namelist())
+        version = None
+        for candidate in ("client/VERSION", "VERSION"):
+            if candidate in names:
+                version = "v" + zf.read(candidate).decode("utf-8").strip()
+                break
+        if version is None:
+            raise RuntimeError(f"{CLIENT_RELEASE_ASSET} is missing a VERSION file")
+
+        version_dir = os.path.join(client_dir, version)
+        root = os.path.abspath(version_dir)
+        os.makedirs(version_dir, exist_ok=True)
+        for member in zf.infolist():
+            if member.is_dir():
+                continue
+            rel = member.filename
+            if rel.startswith("client/"):
+                rel = rel[len("client/") :]
+            if not rel:
+                continue
+            dest = os.path.join(version_dir, *rel.split("/"))
+            if not os.path.abspath(dest).startswith(root + os.sep):
+                print(f"  Skipping suspicious archive member: {member.filename}")
+                continue
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with zf.open(member) as src, open(dest, "wb") as out:
+                shutil.copyfileobj(src, out)
+            if sys.platform != "win32" and os.path.basename(dest).startswith("bk_client-"):
+                os.chmod(dest, 0o755)  # noqa: S103  # nosec B103
+    return version
+
+
+def download_client_release(client_dir: str, tag: str | None = None) -> str:
+    """Download the signed ``bk_client.zip`` bundle from the bk_client GitHub
+    releases and unpack it into ``client/vX.Y.Z/``. Returns the client version.
+    """
+    if not tag:
+        pin = read_client_version_pin()
+        tag = resolve_client_release_tag(pin)
+        print(f"Client pin {pin} resolved to release {tag}")
+    api_url = f"https://api.github.com/repos/{CLIENT_RELEASE_REPO}/releases/tags/{tag}"
+
+    print(f"Fetching bk_client release metadata: {api_url}")
+    request = urllib.request.Request(api_url, headers=_github_headers())
+    with urllib.request.urlopen(request) as response:
+        release_data = json.load(response)
+
+    asset_url = None
+    for asset in release_data.get("assets", []):
+        if asset.get("name") == CLIENT_RELEASE_ASSET:
+            asset_url = asset.get("browser_download_url")
+            break
+    if not asset_url:
+        published = release_data.get("tag_name", tag or "latest")
+        print(
+            f"error: bk_client release '{published}' has no {CLIENT_RELEASE_ASSET} asset yet.\n"
+            "       Publish a zipped release, or pass --client-build <bk_client.zip> "
+            "with a locally downloaded signed bundle."
+        )
+        sys.exit(1)
+
+    os.makedirs(client_dir, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        zip_path = os.path.join(tmp, CLIENT_RELEASE_ASSET)
+        print(f"Downloading {asset_url}")
+        request = urllib.request.Request(asset_url, headers=_github_headers())
+        with urllib.request.urlopen(request) as response, open(zip_path, "wb") as fh:
+            shutil.copyfileobj(response, fh)
+        version = _unpack_release_bundle(zip_path, client_dir)
+    print(f"Blendkit-Client {version} downloaded and unpacked into {client_dir}")
+    return version
+
+
+def install_local_client_bundle(bundle_path: str, client_dir: str) -> str:
+    """Unpack a locally downloaded signed ``bk_client.zip`` into *client_dir*.
+
+    *bundle_path* may point at the ``bk_client.zip`` file itself or a directory
+    containing it.
+    """
+    if os.path.isdir(bundle_path):
+        candidate = os.path.join(bundle_path, CLIENT_RELEASE_ASSET)
+        if os.path.isfile(candidate):
+            bundle_path = candidate
+    if not os.path.isfile(bundle_path):
+        print(
+            f"error: local client bundle {bundle_path} not found "
+            f"(expected a {CLIENT_RELEASE_ASSET} file or a directory containing it)."
+        )
+        sys.exit(1)
+    os.makedirs(client_dir, exist_ok=True)
+    version = _unpack_release_bundle(bundle_path, client_dir)
+    print(f"Blendkit-Client {version} installed from {bundle_path}")
+    return version
+
+
 # ── Package ───────────────────────────────────────────────────────────────────
 
 
@@ -235,6 +409,23 @@ def build(channel: str, version: str | None) -> None:
     build_zip(full_version)
 
 
+def release(channel: str, version: str | None, client_build: str | None) -> None:
+    """Vendor + fetch signed client binaries + stamp + zip.
+
+    Unlike ``build`` (which compiles the client locally and is unsigned), this
+    ships the code-signed/notarized binaries published by the bk_client repo's
+    own CI — either the pinned release (default) or a locally supplied
+    ``--client-build <bk_client.zip>`` bundle.
+    """
+    vendor_packages()
+    if client_build:
+        install_local_client_bundle(client_build, CLIENT_DIR)
+    else:
+        download_client_release(CLIENT_DIR)
+    full_version = write_version_stamp(channel, version)
+    build_zip(full_version)
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 
@@ -244,7 +435,7 @@ def main() -> None:
 
     sub.add_parser("vendor", help="Vendor pure-Python deps into the plugin lib/")
 
-    p_build = sub.add_parser("build", help="Vendor + client + stamp + zip")
+    p_build = sub.add_parser("build", help="Vendor + local (unsigned) client + stamp + zip")
     p_build.add_argument("--channel", default=CHANNEL_DEV, choices=[CHANNEL_STABLE, CHANNEL_ALPHA, CHANNEL_DEV])
     p_build.add_argument("--version", default=None)
 
@@ -254,6 +445,13 @@ def main() -> None:
     p_stamp = sub.add_parser("stamp", help="Write _build_version.py only")
     p_stamp.add_argument("--channel", default=CHANNEL_DEV, choices=[CHANNEL_STABLE, CHANNEL_ALPHA, CHANNEL_DEV])
     p_stamp.add_argument("--version", default=None)
+
+    p_release = sub.add_parser("release", help="Vendor + signed client release + stamp + zip (for CI/publishing)")
+    p_release.add_argument("--channel", default=CHANNEL_STABLE, choices=[CHANNEL_STABLE, CHANNEL_ALPHA, CHANNEL_DEV])
+    p_release.add_argument("--version", default=None)
+    p_release.add_argument(
+        "--client-build", default=None, help="Path to a locally downloaded signed bk_client.zip (or its directory)"
+    )
 
     args = parser.parse_args()
     if args.command == "vendor":
@@ -266,6 +464,8 @@ def main() -> None:
         build_client()
     elif args.command == "stamp":
         write_version_stamp(args.channel, args.version)
+    elif args.command == "release":
+        release(args.channel, args.version, args.client_build)
 
 
 if __name__ == "__main__":

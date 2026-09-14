@@ -1,0 +1,131 @@
+name: Release
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Produces a ready-to-use, zero-setup zip and publishes it to GitHub Releases.
+#
+#   • Every merge / push to `main`   → automatic ALPHA prerelease (versioned)
+#   • Every push to `master`         → STABLE release
+#   • Manual "Run workflow" button   → choose the channel yourself
+#
+# The version is computed by `dev.py` as major.minor.YYMMDDHHmm (with a
+# `-alpha` suffix on the alpha channel) and is baked into the plugin itself
+# (Content/Python/bk_unreal/_build_version.py) so users/admins can see exactly
+# what they have installed. Both channels tag as `v<version>`; alpha tags just
+# carry the `-alpha` suffix (e.g. `v0.1.2607101129-alpha`) and are marked as
+# pre-release.
+#
+# CLIENT BINARIES:
+#   The Go client lives in its own repo (BlenderKit/bk_client). `dev.py release`
+#   downloads the *signed* `bk_client.zip` from that repo's GitHub Releases —
+#   we never build/sign the client here, so the shipped binaries are the
+#   correctly code-signed/notarized ones. Pass `--client-build <bk_client.zip>`
+#   (or set BLENDKIT_CLIENT_BINARIES) to use a locally downloaded signed bundle.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 'Release channel to build'
+        type: choice
+        options: [alpha, stable]
+        default: stable
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # bk_client's binaries are downloaded from its own releases, but the
+          # bk_proxor submodule is still required by the plugin at runtime.
+          submodules: recursive
+          # Full history so `git rev-parse HEAD` (the build's commit stamp)
+          # and rolling-tag moves work reliably.
+          fetch-depth: 0
+
+      - name: Determine release channel
+        id: channel
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            CHANNEL="${{ github.event.inputs.channel }}"
+          elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            CHANNEL="alpha"
+          else
+            CHANNEL="stable"
+          fi
+          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+          echo "Selected channel: $CHANNEL"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build plugin
+        # `release` downloads the signed bk_client.zip from the bk_client
+        # GitHub Releases (no local client build). To use a locally downloaded
+        # signed bundle instead, append: --client-build <bk_client.zip>
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python dev.py release --channel "${{ steps.channel.outputs.channel }}"
+
+      - name: Read built version
+        id: version
+        run: |
+          VERSION=$(python -c "import runpy; print(runpy.run_path('Content/Python/bk_unreal/_build_version.py')['VERSION'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Built version: $VERSION"
+
+      - name: Name the artifact
+        id: artifact
+        run: |
+          ZIP="out/Blendkit-${{ steps.version.outputs.version }}.zip"
+          ls -l "$ZIP"
+          echo "file=$ZIP" >> "$GITHUB_OUTPUT"
+
+      # ── ALPHA: a versioned pre-release, tagged like stable but with -alpha ──
+      # The built version already carries the `-alpha` suffix (e.g.
+      # 0.1.2607101129-alpha), so the tag is `v<version>` just like stable.
+      - name: Publish alpha prerelease
+        if: steps.channel.outputs.channel == 'alpha'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ steps.version.outputs.version }}"
+          name: "Blendkit-unreal ${{ steps.version.outputs.version }}"
+          prerelease: true
+          body: |
+            Automated **alpha** build from `main`.
+
+            - Version: `${{ steps.version.outputs.version }}`
+            - Commit: ${{ github.sha }}
+
+            **Install:** unzip and junction/copy the `Blendkit/` folder into your
+            Unreal project's `Plugins/` directory, then restart the editor.
+          files: ${{ steps.artifact.outputs.file }}
+
+      # ── STABLE: a normal, versioned release ───────────────────────────────
+      - name: Publish stable release
+        if: steps.channel.outputs.channel == 'stable'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ steps.version.outputs.version }}"
+          name: "Blendkit-unreal ${{ steps.version.outputs.version }}"
+          prerelease: false
+          body: |
+            Blendkit-unreal **${{ steps.version.outputs.version }}**.
+
+            - Commit: ${{ github.sha }}
+
+            **Install:** unzip and junction/copy the `Blendkit/` folder into your
+            Unreal project's `Plugins/` directory, then restart the editor.
+          files: ${{ steps.artifact.outputs.file }}
