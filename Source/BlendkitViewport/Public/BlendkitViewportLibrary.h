@@ -49,4 +49,15 @@ public:
 	 * proxor hologram preview during drag-to-place. */
 	UFUNCTION(BlueprintCallable, Category = "Blendkit|Viewport")
 	static void DrawDebugTriangleMesh(UObject* WorldContextObject, const TArray<FVector>& Verts, const FLinearColor& Color, float Duration);
+
+	/** Draws (or hides, if bEnabled is false) a single screen-space text label
+	 * anchored to WorldLocation, every viewport render. Unlike
+	 * ``unreal.SystemLibrary.draw_debug_string`` (which requires a
+	 * PlayerController/HUD and is therefore a no-op in the plain, non-PIE
+	 * level editor viewport - see DrawDebugHelpers.cpp), this hooks
+	 * ``UDebugDrawService`` directly, which the editor viewport DOES invoke
+	 * every frame regardless of Play state. Call every tick with the latest
+	 * text/location; state is a single overwritten slot, not a queue. */
+	UFUNCTION(BlueprintCallable, Category = "Blendkit|Viewport")
+	static void DrawDebugTextWorld(bool bEnabled, const FVector& WorldLocation, const FString& Text, const FLinearColor& Color);
 };

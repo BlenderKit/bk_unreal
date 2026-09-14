@@ -67,11 +67,15 @@ _DRAW_DURATION = 0.05
 # as a hairline (or invisible) except very close to the camera. These are
 # target *pixel* widths; :func:`_units_per_pixel` converts them to world
 # units for the object's current distance from the camera each frame.
-_BOX_THICKNESS_PX = 3.0
+_BOX_THICKNESS_PX = 1.5
 _PROXOR_LINE_THICKNESS_PX = 2.0
 _MIN_WORLD_THICKNESS = 0.25  # cm floor so thickness never collapses to 0
 _LABEL_OFFSET_PX = 18.0
-_PROGRESS_BAR_WIDTH_PX = 90.0
+
+# Debug TEXT (Canvas-based) is a separate render path from debug LINES (the
+# line-batcher) and needs a longer buffer to reliably show up each tick -
+# using the same tiny `_DRAW_DURATION` left it invisible.
+_TEXT_DRAW_DURATION = 0.5
 
 _COLOR_HIT = (0, 220, 80)  # green - geometry hit
 _COLOR_FLOOR = (0, 220, 80)  # green - floor fallback (was cyan; wire+proxor should read as one color)
@@ -518,7 +522,11 @@ def spawn_preview_actor() -> Any:
 
 
 def destroy_preview_actor(actor: Any) -> None:
-    """No-op placeholder; see :func:`spawn_preview_actor`."""
+    """No-op placeholder; see :func:`spawn_preview_actor`. Also clears any lingering debug text."""
+    unreal_mod = _unreal()
+    if unreal_mod is None:
+        return
+    _set_debug_text(unreal_mod, False, (0.0, 0.0, 0.0), "", unreal_mod.LinearColor(1.0, 1.0, 1.0, 1.0))
 
 
 def _bbox_corners(bbox_min: tuple, bbox_max: tuple) -> list[tuple[float, float, float]]:
@@ -629,8 +637,7 @@ def update_preview_actor(_actor: Any, state: Any) -> None:
     if state.proxor_mesh:
         _draw_proxor_mesh(unreal_mod, state, color, proxor_thickness, transform)
 
-    if getattr(state, "downloading", False):
-        _draw_download_overlay(unreal_mod, state, color, box_thickness, transform)
+    _draw_asset_label(unreal_mod, state, color, transform)
 
 
 def _download_reveal_z(state: Any) -> float:
@@ -675,13 +682,13 @@ def _draw_proxor_lines_with_reveal(
         _draw_line(unreal_mod, ca, cb, color, thickness)
 
 
-def _draw_download_overlay(
+def _draw_asset_label(
     unreal_mod: Any,
     state: Any,
     color: Any,
-    thickness: float,
     transform: _Transform,
 ) -> None:
+    """Asset name (+ status while downloading) above the bbox - visible for the whole drag."""
     corners = [_transform_point(p, transform) for p in _bbox_corners(state.bbox_min, state.bbox_max)]
     top_z = max(p[2] for p in corners)
     center_x = sum(p[0] for p in corners) / len(corners)
@@ -689,22 +696,43 @@ def _draw_download_overlay(
     upp = _units_per_pixel(unreal_mod, (center_x, center_y, top_z))
     label_loc = (center_x, center_y, top_z + _LABEL_OFFSET_PX * upp)
     asset_name = str(state.asset_data.get("name") or state.asset_data.get("displayName") or "Asset")
-    status = str(getattr(state, "download_status", "") or "Processing")
-    progress = max(0.0, min(1.0, float(getattr(state, "download_progress", 0.0))))
-    _draw_text(unreal_mod, label_loc, f"{asset_name} - {status} {round(progress * 100)}%", color)
-
-    half = _PROGRESS_BAR_WIDTH_PX * upp * 0.5
-    y = label_loc[1]
-    z = label_loc[2] - _LABEL_OFFSET_PX * upp * 0.35
-    x0 = label_loc[0] - half
-    x1 = label_loc[0] + half
-    xf = x0 + (x1 - x0) * progress
-    bg = unreal_mod.LinearColor(0.05, 0.05, 0.05, 1.0)
-    _draw_line(unreal_mod, (x0, y, z), (x1, y, z), bg, max(thickness, 2.0 * upp))
-    _draw_line(unreal_mod, (x0, y, z), (xf, y, z), color, max(thickness, 3.0 * upp))
+    if getattr(state, "downloading", False):
+        status = str(getattr(state, "download_status", "") or "Processing")
+        progress = max(0.0, min(1.0, float(getattr(state, "download_progress", 0.0))))
+        text = f"{asset_name}\n{status} {round(progress * 100)}%"
+    else:
+        text = asset_name
+    _set_debug_text(unreal_mod, True, label_loc, text, color)
 
 
-def _draw_text(unreal_mod: Any, location: tuple, text: str, color: Any) -> None:
+_warned_no_debug_text = False
+
+
+def _set_debug_text(unreal_mod: Any, enabled: bool, location: tuple, text: str, color: Any) -> None:
+    """Show/hide one screen-space text label, preferring the editor-viewport-aware C++ hook.
+
+    ``unreal.SystemLibrary.draw_debug_string`` requires a PlayerController/HUD
+    and is therefore invisible in the plain (non-PIE) level editor viewport -
+    this tries ``BlendkitViewportLibrary.draw_debug_text_world`` (built into
+    the ``BlendkitViewport`` C++ module, hooks ``UDebugDrawService`` instead)
+    first, and only falls back to ``draw_debug_string`` (best-effort, may not
+    render outside Play) if that module isn't built.
+    """
+    global _warned_no_debug_text
+    lib = getattr(unreal_mod, "BlendkitViewportLibrary", None)
+    if lib is not None and hasattr(lib, "draw_debug_text_world"):
+        try:
+            lib.draw_debug_text_world(enabled, unreal_mod.Vector(*location), text, color)
+            return
+        except Exception as exc:
+            if not _warned_no_debug_text:
+                log.debug("BlendkitViewportLibrary.draw_debug_text_world failed: %s", exc)
+                _warned_no_debug_text = True
+    elif not _warned_no_debug_text:
+        log.debug("BlendkitViewportLibrary.draw_debug_text_world unavailable (rebuild the plugin?).")
+        _warned_no_debug_text = True
+    if not enabled:
+        return  # no fallback "clear" - draw_debug_string just expires on its own
     world = _editor_world(unreal_mod)
     if world is None:
         return
@@ -715,7 +743,7 @@ def _draw_text(unreal_mod: Any, location: tuple, text: str, color: Any) -> None:
             text,
             None,
             color,
-            _DRAW_DURATION,
+            _TEXT_DRAW_DURATION,
         )
     except Exception as exc:
         log.debug("draw_debug_string failed: %s", exc)

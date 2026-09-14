@@ -3,6 +3,9 @@
 #include "Editor.h"
 #include "EditorViewportClient.h"
 #include "Engine/Engine.h"
+#include "Engine/Canvas.h"
+#include "CanvasItem.h"
+#include "Debug/DebugDrawService.h"
 #include "LevelEditorViewport.h"
 #include "SceneView.h"
 #include "UnrealClient.h"
@@ -10,6 +13,38 @@
 
 namespace
 {
+	struct FBlendkitDebugTextState
+	{
+		bool bEnabled = false;
+		FVector WorldLocation = FVector::ZeroVector;
+		FString Text;
+		FLinearColor Color = FLinearColor::White;
+	};
+
+	FBlendkitDebugTextState GDebugTextState;
+	bool GDebugTextServiceRegistered = false;
+
+	// UDebugDrawService::Draw is called from FEditorViewportClient::Draw for
+	// every level viewport (editor AND PIE) each frame, unlike
+	// ::DrawDebugString (which only iterates World->GetPlayerControllerIterator
+	// and is therefore a no-op with no PlayerController/HUD, i.e. outside PIE).
+	void DrawBlendkitDebugText(UCanvas* Canvas, APlayerController*)
+	{
+		if (!GDebugTextState.bEnabled || Canvas == nullptr || GDebugTextState.Text.IsEmpty())
+		{
+			return;
+		}
+		const FVector ScreenPos = Canvas->Project(GDebugTextState.WorldLocation);
+		if (ScreenPos.X < 0.0 || ScreenPos.Y < 0.0 || ScreenPos.X > Canvas->ClipX || ScreenPos.Y > Canvas->ClipY)
+		{
+			return; // off-screen or behind the camera
+		}
+		FCanvasTextItem TextItem(FVector2D::ZeroVector, FText::FromString(GDebugTextState.Text), GEngine->GetSmallFont(), GDebugTextState.Color);
+		TextItem.EnableShadow(FLinearColor::Black);
+		TextItem.Scale = FVector2D(1.25f, 1.25f);
+		Canvas->DrawItem(TextItem, ScreenPos.X, ScreenPos.Y);
+	}
+
 	// GetActiveViewport() is the last-*focused* viewport, not necessarily the
 	// one currently under the cursor - during a drag the OS focus is on the
 	// external Qt asset-bar window, so that heuristic picks the wrong (or a
@@ -130,4 +165,24 @@ void UBlendkitViewportLibrary::DrawDebugTriangleMesh(UObject* WorldContextObject
 	}
 
 	::DrawDebugMesh(World, Verts, Indices, Color.ToFColor(true), false, Duration, SDPG_World);
+}
+
+void UBlendkitViewportLibrary::DrawDebugTextWorld(bool bEnabled, const FVector& WorldLocation, const FString& Text, const FLinearColor& Color)
+{
+	if (!GDebugTextServiceRegistered)
+	{
+		// "Game" (the category originally used here) gates on the "is this a
+		// game viewport" show flag, which is OFF in the plain editor level
+		// viewport by design - registering under it never actually broadcasts
+		// there, which was the bug ("no text" even though this function was
+		// definitely being called). "StaticMeshes" is on in effectively every
+		// real viewing session (turning it off would hide the whole level),
+		// in both the editor viewport and PIE.
+		UDebugDrawService::Register(TEXT("StaticMeshes"), FDebugDrawDelegate::CreateStatic(&DrawBlendkitDebugText));
+		GDebugTextServiceRegistered = true;
+	}
+	GDebugTextState.bEnabled = bEnabled;
+	GDebugTextState.WorldLocation = WorldLocation;
+	GDebugTextState.Text = Text;
+	GDebugTextState.Color = Color;
 }
