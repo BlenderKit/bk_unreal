@@ -1,14 +1,30 @@
 <div align="center">
+  <img src="/Content/Python/bk_unreal/data/icons/blendkit_logo.png" alt="Logo" width="100" height="100"/>
   <h3 align="center">Blendkit for Unreal Engine</h3>
 
   Asset search, download and drag&drop directly inside Unreal Engine 5.6.
+
+  ![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/blenderkit/bk_unreal/total?color=blue)
+  ![GitHub Downloads (all assets, latest release)](https://img.shields.io/github/downloads/blenderkit/bk_unreal/latest/total?color=blue)
+  [![GitHub Release](https://img.shields.io/github/v/release/blenderkit/bk_unreal?color=green)](https://github.com/BlenderKit/bk_unreal/releases/latest)
+  [![Project license](https://img.shields.io/github/license/blenderkit/bk_unreal.svg?color=orange)](LICENSE)
+  </br>
+  ![GitHub commit activity](https://img.shields.io/github/commit-activity/y/blenderkit/bk_unreal?color=blue)
+  ![GitHub branch check runs](https://img.shields.io/github/check-runs/blenderkit/bk_unreal/main?color=green)
+
 </div>
 
 > **Status:** early scaffold / **pre-alpha**. This repository is a fresh port of
 > the Blendkit Blender add-on and the [Maya plugin (`bk_maya`)](../bk_maya) to
 > Unreal Engine's editor Python API. The plumbing (plugin discovery, menu,
 > Qt-in-editor host, Go-client integration, dev tooling) is in place; the asset
-> bar UI is intentionally minimal and grows from here.
+> bar UI is intentionally minimal and grows from here. Automated releases are
+> published to [GitHub Releases](https://github.com/BlenderKit/bk_unreal/releases):
+> every merge to `main` produces a rolling **Alpha** prerelease, and `master`
+> (or the manual *Run workflow* button) produces a regular release. The zip is
+> self-contained — unzip and junction/copy the `Blendkit/` folder into your
+> project's `Plugins/` directory and restart the editor. You can still build
+> locally with `python dev.py build`.
 
 ## About
 
