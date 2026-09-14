@@ -308,6 +308,39 @@ def reset_wheel_accum() -> None:
     _wheel_accum = 0
 
 
+_warned_no_realtime_override = False
+
+
+def set_placement_realtime_active(active: bool) -> None:
+    """Force the level viewport to Realtime for the duration of a drag (call at start/end).
+
+    Debug lines/meshes expire against world time, which keeps advancing even
+    while a viewport isn't set to Realtime (it then only redraws when
+    something invalidates it) - a viewport that goes a beat without
+    redrawing lets the short-lived preview lines expire before it ever
+    renders them, while the persistent debug-text overlay (no expiry) still
+    shows on whatever infrequent redraw does happen. That mismatch is what
+    caused "text visible, bbox/proxor not". No-op if the C++ module isn't
+    built (falls back to whatever behaviour the viewport already had).
+    """
+    global _warned_no_realtime_override
+    unreal_mod = _unreal()
+    if unreal_mod is None:
+        return
+    lib = getattr(unreal_mod, "BlendkitViewportLibrary", None)
+    if lib is None or not hasattr(lib, "set_placement_realtime_override"):
+        if not _warned_no_realtime_override:
+            log.debug("BlendkitViewportLibrary.set_placement_realtime_override unavailable (rebuild the plugin?).")
+            _warned_no_realtime_override = True
+        return
+    try:
+        lib.set_placement_realtime_override(active)
+    except Exception as exc:
+        if not _warned_no_realtime_override:
+            log.debug("set_placement_realtime_override failed: %s", exc)
+            _warned_no_realtime_override = True
+
+
 def consume_wheel_delta() -> float:
     """Return rotate-step notches accumulated since the last call.
 

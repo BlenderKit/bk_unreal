@@ -23,6 +23,13 @@ namespace
 
 	FBlendkitDebugTextState GDebugTextState;
 	bool GDebugTextServiceRegistered = false;
+	bool GPlacementRealtimeActive = false;
+
+	const FText& PlacementRealtimeOverrideName()
+	{
+		static const FText Name = FText::FromString(TEXT("BlendkitPlacement"));
+		return Name;
+	}
 
 	// UDebugDrawService::Draw is called from FEditorViewportClient::Draw for
 	// every level viewport (editor AND PIE) each frame, unlike
@@ -185,4 +192,28 @@ void UBlendkitViewportLibrary::DrawDebugTextWorld(bool bEnabled, const FVector& 
 	GDebugTextState.WorldLocation = WorldLocation;
 	GDebugTextState.Text = Text;
 	GDebugTextState.Color = Color;
+}
+
+void UBlendkitViewportLibrary::SetPlacementRealtimeOverride(bool bEnabled)
+{
+	if (GEditor == nullptr || bEnabled == GPlacementRealtimeActive)
+	{
+		return;
+	}
+	for (FEditorViewportClient* Client : GEditor->GetLevelViewportClients())
+	{
+		if (Client == nullptr)
+		{
+			continue;
+		}
+		if (bEnabled)
+		{
+			Client->AddRealtimeOverride(true, PlacementRealtimeOverrideName());
+		}
+		else
+		{
+			Client->RemoveRealtimeOverride(PlacementRealtimeOverrideName(), /*bCheckMissingOverride=*/false);
+		}
+	}
+	GPlacementRealtimeActive = bEnabled;
 }

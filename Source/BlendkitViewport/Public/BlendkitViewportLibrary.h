@@ -60,4 +60,20 @@ public:
 	 * text/location; state is a single overwritten slot, not a queue. */
 	UFUNCTION(BlueprintCallable, Category = "Blendkit|Viewport")
 	static void DrawDebugTextWorld(bool bEnabled, const FVector& WorldLocation, const FString& Text, const FLinearColor& Color);
+
+	/** Forces every level viewport to Realtime (or releases that override)
+	 * for the duration of a drag-to-place session.
+	 *
+	 * Debug lines/meshes (``draw_debug_line`` etc.) expire against
+	 * ``World->GetTimeSeconds()``, which keeps advancing even while a
+	 * viewport is NOT set to Realtime (a non-realtime viewport only
+	 * re-renders when something invalidates it, e.g. mouse input) - if that
+	 * viewport goes a beat without redrawing, the short-lived preview lines
+	 * expire before it ever gets around to drawing them, while the
+	 * persistent text from DrawDebugTextWorld (no time-based expiry) still
+	 * shows on whatever infrequent redraw does happen. This is why the bbox/
+	 * proxor could intermittently vanish while the label stayed visible.
+	 * Call with true at drag start, false at drag end/cancel. */
+	UFUNCTION(BlueprintCallable, Category = "Blendkit|Viewport")
+	static void SetPlacementRealtimeOverride(bool bEnabled);
 };

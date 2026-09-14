@@ -322,6 +322,7 @@ class DragSession:
 
         viewport_ue.reset_wheel_accum()
         viewport_ue.set_wheel_capture_active(True)
+        viewport_ue.set_placement_realtime_active(True)
         self._tick_count = 0
         self._tick_handle = viewport_ue.install_tick(self._poll_cursor)
 
@@ -438,6 +439,7 @@ class DragSession:
             self._tick_handle = None
             viewport_ue.destroy_preview_actor(self._preview_actor)
             self._preview_actor = None
+            viewport_ue.set_placement_realtime_active(False)
             return
         self._tick_count += 1
 
