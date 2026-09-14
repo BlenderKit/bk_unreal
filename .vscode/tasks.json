@@ -2,14 +2,18 @@
     "version": "2.0.0",
     "tasks": [
         {
+            // BK_TEST_UPROJECT_TARGET: the target name to build, e.g. "c_58Editor"
+            // (your test project's name + "Editor"). BK_TEST_UPROJECT: absolute path to
+            // your local test .uproject. Both are user/system environment variables — set
+            // once outside git, not tracked here.
             "label": "Build BlendkitViewport (test project, UE 5.8)",
             "type": "shell",
             "command": "C:\\Program Files\\Epic Games\\UE_5.8\\Engine\\Build\\BatchFiles\\Build.bat",
             "args": [
-                "c_58Editor",
+                "${env:BK_TEST_UPROJECT_TARGET}",
                 "Win64",
                 "Development",
-                "-Project=C:/Users/mikih/unreal_projects/c_58/c_58.uproject",
+                "-Project=${env:BK_TEST_UPROJECT}",
                 "-WaitMutex",
                 "-FromMsBuild"
             ],
@@ -19,7 +23,7 @@
                 "panel": "shared",
                 "clear": true
             },
-            "detail": "Compiles the BlendkitViewport C++ module against the test project (matches 'Launch test project' in launch.json). Close the editor first - fails with 'Unable to build while Live Coding is active' otherwise (use Ctrl+Alt+F11 inside the editor instead for a quick hot-reload)."
+            "detail": "Compiles the BlendkitViewport C++ module against the test project (matches 'Launch test project' in launch.json). Requires the BK_TEST_UPROJECT and BK_TEST_UPROJECT_TARGET environment variables to be set locally. Close the editor first - fails with 'Unable to build while Live Coding is active' otherwise (use Ctrl+Alt+F11 inside the editor instead for a quick hot-reload)."
         }
     ]
 }
