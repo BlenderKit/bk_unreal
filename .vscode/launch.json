@@ -122,12 +122,14 @@
             "osx": { "python": "${workspaceFolder}/.venv/bin/python" }
         },
         {
+            // BK_TEST_UPROJECT: absolute path to your local test .uproject (set once as a
+            // user/system environment variable — not tracked in git, no personal paths here).
             "name": "Launch test project",
             "type": "cppvsdbg",
             "request": "launch",
             "cwd": "${workspaceFolder}",
             "program": "C:/Program Files/Epic Games/UE_5.8/Engine/Binaries/Win64/UnrealEditor.exe",
-            "args": ["C:/Users/mikih/unreal_projects/c_58/c_58.uproject"],
+            "args": ["${env:BK_TEST_UPROJECT}"],
             "console": "externalTerminal",
             "preLaunchTask": "Build BlendkitViewport (test project, UE 5.8)"
         },
@@ -137,7 +139,7 @@
             "request": "launch",
             "cwd": "${workspaceFolder}",
             "program": "C:/Program Files/Epic Games/UE_5.8/Engine/Binaries/Win64/UnrealEditor.exe",
-            "args": ["C:/Users/mikih/unreal_projects/c_58/c_58.uproject"],
+            "args": ["${env:BK_TEST_UPROJECT}"],
             "console": "externalTerminal"
         },
         {
