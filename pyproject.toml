@@ -1,3 +1,11 @@
+# pip/setuptools backend for `pip install -e .` (used by CI). The repo root is
+# an Unreal plugin, so several non-Python top-level dirs (Source/, Content/,
+# bk_client/) would confuse setuptools' flat-layout auto-discovery — the config
+# under [tool.setuptools] below scopes discovery to the Python package instead.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "bk_unreal"
 description = "Blendkit for Unreal Engine — asset search, download and drag&drop inside the UE editor."
@@ -7,6 +15,19 @@ dependencies = [
     "requests>=2.18.4",
     "types-requests>=2.31.0.5",
 ]
+
+# The importable package lives at Content/Python/bk_unreal (Unreal adds
+# Content/Python to sys.path). Point setuptools there and take the version from
+# BASE_VERSION so an editable install matches pytest's `pythonpath`.
+[tool.setuptools]
+package-dir = { "" = "Content/Python" }
+
+[tool.setuptools.packages.find]
+where = ["Content/Python"]
+include = ["bk_unreal*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "bk_unreal._version.BASE_VERSION" }
 
 [tool.pdm]
 distribution = false
