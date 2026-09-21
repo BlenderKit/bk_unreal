@@ -125,8 +125,9 @@
             // BK_TEST_UPROJECT: absolute path to your local test .uproject (set once as a
             // user/system environment variable — not tracked in git, no personal paths here).
             // One config per OS because launch.json forbids "type" in platform sections;
-            // each is hidden on the OSes it does not apply to. macOS/Linux use lldb
-            // (requires the CodeLLDB extension); Windows uses cppvsdbg.
+            // each is hidden on the OSes it does not apply to. macOS/Linux launch the
+            // editor in the integrated terminal with NO debugger attached (so the editor's
+            // benign C++ start-up throws never pause execution); Windows uses cppvsdbg.
             "name": "Launch test project (Windows)",
             "type": "cppvsdbg",
             "request": "launch",
@@ -140,22 +141,20 @@
         },
         {
             "name": "Launch test project (macOS)",
-            "type": "lldb",
+            "type": "node-terminal",
             "request": "launch",
             "cwd": "${workspaceFolder}",
-            "program": "/Users/Shared/Epic Games/UE_5.8/Engine/Binaries/Mac/UnrealEditor.app/Contents/MacOS/UnrealEditor",
-            "args": ["${env:BK_TEST_UPROJECT}"],
+            "command": "'/Users/Shared/Epic Games/UE_5.8/Engine/Binaries/Mac/UnrealEditor.app/Contents/MacOS/UnrealEditor' \"$BK_TEST_UPROJECT\" -log -stdout -FullStdOutLogOutput",
             "preLaunchTask": "Build BlendkitViewport (test project, UE 5.8)",
             "windows": { "presentation": { "hidden": true } },
             "linux": { "presentation": { "hidden": true } }
         },
         {
             "name": "Launch test project (Linux)",
-            "type": "lldb",
+            "type": "node-terminal",
             "request": "launch",
             "cwd": "${workspaceFolder}",
-            "program": "${env:HOME}/UnrealEngine/Engine/Binaries/Linux/UnrealEditor",
-            "args": ["${env:BK_TEST_UPROJECT}"],
+            "command": "\"$HOME/UnrealEngine/Engine/Binaries/Linux/UnrealEditor\" \"$BK_TEST_UPROJECT\" -log -stdout -FullStdOutLogOutput",
             "preLaunchTask": "Build BlendkitViewport (test project, UE 5.8)",
             "windows": { "presentation": { "hidden": true } },
             "osx": { "presentation": { "hidden": true } }
@@ -173,21 +172,19 @@
         },
         {
             "name": "Launch test project (macOS, skip build)",
-            "type": "lldb",
+            "type": "node-terminal",
             "request": "launch",
             "cwd": "${workspaceFolder}",
-            "program": "/Users/Shared/Epic Games/UE_5.8/Engine/Binaries/Mac/UnrealEditor.app/Contents/MacOS/UnrealEditor",
-            "args": ["${env:BK_TEST_UPROJECT}"],
+            "command": "'/Users/Shared/Epic Games/UE_5.8/Engine/Binaries/Mac/UnrealEditor.app/Contents/MacOS/UnrealEditor' \"$BK_TEST_UPROJECT\" -log -stdout -FullStdOutLogOutput",
             "windows": { "presentation": { "hidden": true } },
             "linux": { "presentation": { "hidden": true } }
         },
         {
             "name": "Launch test project (Linux, skip build)",
-            "type": "lldb",
+            "type": "node-terminal",
             "request": "launch",
             "cwd": "${workspaceFolder}",
-            "program": "${env:HOME}/UnrealEngine/Engine/Binaries/Linux/UnrealEditor",
-            "args": ["${env:BK_TEST_UPROJECT}"],
+            "command": "\"$HOME/UnrealEngine/Engine/Binaries/Linux/UnrealEditor\" \"$BK_TEST_UPROJECT\" -log -stdout -FullStdOutLogOutput",
             "windows": { "presentation": { "hidden": true } },
             "osx": { "presentation": { "hidden": true } }
         },
