@@ -120,6 +120,38 @@ Restart the editor. Unreal runs `Content/Python/init_unreal.py`, which builds th
 To undo: `python .vscode/unreal_plugin.py remove --project "..."` (or
 `unpythonpath`).
 
+### Building the native `BlendkitViewport` module
+
+The C++ module under [Source/BlendkitViewport](Source/BlendkitViewport) is built
+against a local test project. The VS Code task **"Build BlendkitViewport (test
+project, UE 5.8)"** and the matching *Launch test project* configs read two
+variables that point at that project (kept out of git so each developer sets
+their own):
+
+- `BK_TEST_UPROJECT` — absolute path to your test `.uproject`.
+- `BK_TEST_UPROJECT_TARGET` — the editor target name, i.e. your project name +
+  `Editor` (e.g. `c_58Editor`).
+
+Set them in [.env](.env) (already wired to `python.envFile`) for the Python
+tooling, **and** export them in the environment VS Code inherits so the build
+task's `${env:...}` substitution resolves — the simplest is `~/.zshenv` on
+macOS/Linux or a User environment variable on Windows. Restart VS Code after
+setting them:
+
+```sh
+# ~/.zshenv (macOS/Linux)
+export BK_TEST_UPROJECT="/path/to/MyGame/MyGame.uproject"
+export BK_TEST_UPROJECT_TARGET="MyGameEditor"
+```
+
+Close the editor before running the build task (Live Coding locks the module);
+for a quick in-editor hot-reload use **Ctrl+Alt+F11** instead.
+
+> The build task passes `-NoUBA`. Because the plugin is junctioned/symlinked
+> into the project, Unreal Build Accelerator writes object files to the real
+> repo path but links them from the junction path, failing with `no such file
+> or directory` on the `.o` files. Disabling UBA sidesteps that aliasing.
+
 ## Building a distributable
 
 ```powershell

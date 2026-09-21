@@ -5,6 +5,9 @@ set REPO_FOLDER=%~dp0..
 echo Repository directory: %REPO_FOLDER%
 pushd "%REPO_FOLDER%"
 
+echo Initialising git submodules (bk_client, bk_proxor)...
+git submodule update --init --recursive
+
 where pdm >nul 2>nul
 if errorlevel 1 (
     echo "'pdm' not found. Installing via official installer..."
@@ -27,6 +30,9 @@ if errorlevel 1 (
     popd
     exit /b 1
 )
+
+echo Ensuring pip is available in the venv (dev.py vendor uses pip download)...
+pdm run python -m ensurepip --upgrade
 
 echo Vendoring Qt into the plugin...
 pdm run python dev.py vendor

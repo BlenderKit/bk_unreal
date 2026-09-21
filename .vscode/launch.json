@@ -4,7 +4,7 @@
         {
             "id": "uproject",
             "type": "promptString",
-            "description": "Path to the Unreal .uproject file (or its folder) to use for live dev.",
+            "description": "Path to the Unreal .uproject file (or its folder). Paste the raw path — do NOT escape spaces with backslashes.",
             "default": ""
         }
     ],
@@ -124,23 +124,72 @@
         {
             // BK_TEST_UPROJECT: absolute path to your local test .uproject (set once as a
             // user/system environment variable — not tracked in git, no personal paths here).
-            "name": "Launch test project",
+            // One config per OS because launch.json forbids "type" in platform sections;
+            // each is hidden on the OSes it does not apply to. macOS/Linux use lldb
+            // (requires the CodeLLDB extension); Windows uses cppvsdbg.
+            "name": "Launch test project (Windows)",
             "type": "cppvsdbg",
             "request": "launch",
             "cwd": "${workspaceFolder}",
             "program": "C:/Program Files/Epic Games/UE_5.8/Engine/Binaries/Win64/UnrealEditor.exe",
             "args": ["${env:BK_TEST_UPROJECT}"],
             "console": "externalTerminal",
-            "preLaunchTask": "Build BlendkitViewport (test project, UE 5.8)"
+            "preLaunchTask": "Build BlendkitViewport (test project, UE 5.8)",
+            "osx": { "presentation": { "hidden": true } },
+            "linux": { "presentation": { "hidden": true } }
         },
         {
-            "name": "Launch test project (skip build)",
+            "name": "Launch test project (macOS)",
+            "type": "lldb",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "program": "/Users/Shared/Epic Games/UE_5.8/Engine/Binaries/Mac/UnrealEditor.app/Contents/MacOS/UnrealEditor",
+            "args": ["${env:BK_TEST_UPROJECT}"],
+            "preLaunchTask": "Build BlendkitViewport (test project, UE 5.8)",
+            "windows": { "presentation": { "hidden": true } },
+            "linux": { "presentation": { "hidden": true } }
+        },
+        {
+            "name": "Launch test project (Linux)",
+            "type": "lldb",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "program": "${env:HOME}/UnrealEngine/Engine/Binaries/Linux/UnrealEditor",
+            "args": ["${env:BK_TEST_UPROJECT}"],
+            "preLaunchTask": "Build BlendkitViewport (test project, UE 5.8)",
+            "windows": { "presentation": { "hidden": true } },
+            "osx": { "presentation": { "hidden": true } }
+        },
+        {
+            "name": "Launch test project (Windows, skip build)",
             "type": "cppvsdbg",
             "request": "launch",
             "cwd": "${workspaceFolder}",
             "program": "C:/Program Files/Epic Games/UE_5.8/Engine/Binaries/Win64/UnrealEditor.exe",
             "args": ["${env:BK_TEST_UPROJECT}"],
-            "console": "externalTerminal"
+            "console": "externalTerminal",
+            "osx": { "presentation": { "hidden": true } },
+            "linux": { "presentation": { "hidden": true } }
+        },
+        {
+            "name": "Launch test project (macOS, skip build)",
+            "type": "lldb",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "program": "/Users/Shared/Epic Games/UE_5.8/Engine/Binaries/Mac/UnrealEditor.app/Contents/MacOS/UnrealEditor",
+            "args": ["${env:BK_TEST_UPROJECT}"],
+            "windows": { "presentation": { "hidden": true } },
+            "linux": { "presentation": { "hidden": true } }
+        },
+        {
+            "name": "Launch test project (Linux, skip build)",
+            "type": "lldb",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "program": "${env:HOME}/UnrealEngine/Engine/Binaries/Linux/UnrealEditor",
+            "args": ["${env:BK_TEST_UPROJECT}"],
+            "windows": { "presentation": { "hidden": true } },
+            "osx": { "presentation": { "hidden": true } }
         },
         {
             "name": "[RUFF] Check All",

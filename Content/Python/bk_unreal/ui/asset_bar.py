@@ -42,7 +42,7 @@ from ..core import client_lib
 from ..core import icons as bk_icons
 from ..core import placement as bk_placement
 from ..core import search as bk_search
-from ..core.qt_host import get_qapp, parent_to_editor
+from ..core.qt_host import call_on_ui_thread, get_qapp, parent_to_editor
 
 log = logging.getLogger(__name__)
 
@@ -549,12 +549,15 @@ def open_asset_bar() -> AssetBarWidget | None:
         return None
 
     if _current_bar is not None:
-        _current_bar.show()
-        _current_bar.raise_()
+        call_on_ui_thread(lambda: (_current_bar.show(), _current_bar.raise_()))
         return _current_bar
 
-    bar = AssetBarWidget()
-    bar.show()
+    def _build() -> AssetBarWidget:
+        bar = AssetBarWidget()
+        bar.show()
+        return bar
+
+    bar = call_on_ui_thread(_build)
     parent_to_editor(bar)
     _current_bar = bar
     return bar
