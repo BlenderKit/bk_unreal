@@ -58,3 +58,18 @@ def test_run_blender_script_nests_recipe_params(monkeypatch) -> None:
         "out_usd": "C:/cache/model.usd",
         "max_resolution": "ORIGINAL",
     }
+
+
+def test_blocking_file_download_uses_download_timeout(monkeypatch, tmp_path) -> None:
+    captured = {}
+
+    def fake_request(method, url, body=None, **kwargs):
+        captured.update(kwargs)
+        return "File downloaded successfully"
+
+    monkeypatch.setattr(client_lib, "ensure_running", lambda: "62485")
+    monkeypatch.setattr(client_lib, "_effective_api_key", lambda: "")
+    monkeypatch.setattr(client_lib, "_http_request", fake_request)
+
+    assert client_lib.blocking_file_download("https://example.test/model.blend", str(tmp_path / "model.blend"))
+    assert captured["read_timeout"] == client_lib.BLOCKING_DOWNLOAD_TIMEOUT

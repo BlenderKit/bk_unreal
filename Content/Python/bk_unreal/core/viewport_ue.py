@@ -34,7 +34,9 @@ uninstalls a hook whose callback blocks the ~300 ms timeout) and only
 accumulates wheel deltas into a module-level counter, drained each tick by
 :func:`consume_wheel_delta`. On non-Windows platforms, or if the hook
 fails to install, Q/E key hold is used as a continuous-rotation fallback.
-Button-release/Escape are polled via ``GetAsyncKeyState`` each tick.
+Button-release/Escape are polled each tick via ``GetAsyncKeyState`` on Windows
+and CoreGraphics ``CGEventSource{Button,Key}State`` on macOS (both read live HID
+state; the Q/E rotation fallback uses the same path).
 """
 
 from __future__ import annotations
@@ -48,6 +50,7 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 _IS_WINDOWS = sys.platform == "win32"
+_IS_MACOS = sys.platform == "darwin"
 _DEFAULT_FOV_DEG = 90.0
 
 _warned_no_ctypes = False
@@ -146,7 +149,7 @@ def uninstall_tick(handle: Any) -> None:
         log.debug("uninstall_tick failed: %s", exc)
 
 
-# ── input polling (ctypes, Windows-only) ────────────────────────────────────
+# ── input polling (ctypes: Win32 GetAsyncKeyState / macOS CoreGraphics) ─────
 
 _VK_LBUTTON = 0x01
 _VK_RBUTTON = 0x02
@@ -157,18 +160,54 @@ _VK_E = 0x45
 _prev_lmb = False
 _prev_rmb = False
 
+# macOS CoreGraphics HID polling, the counterpart to Win32 GetAsyncKeyState.
+# CGEventSourceButtonState / CGEventSourceKeyState read live hardware state from
+# any thread with no run loop; reading button/key state needs no Accessibility
+# grant (only event *taps* do). Win32 virtual-keys are mapped to macOS codes.
+_CG_STATE_COMBINED = 0  # kCGEventSourceStateCombinedSessionState
+_MAC_MOUSE_BUTTON = {_VK_LBUTTON: 0, _VK_RBUTTON: 1}  # kCGMouseButtonLeft/Right
+_MAC_KEYCODE = {_VK_ESCAPE: 53, _VK_Q: 12, _VK_E: 14}  # macOS virtual keycodes
+_cg: Any = None
+
+
+def _macos_cg() -> Any:
+    """Bind (once) the CoreGraphics HID-state functions used for input polling."""
+    global _cg
+    if _cg is None:
+        import ctypes
+
+        cg = ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+        cg.CGEventSourceButtonState.restype = ctypes.c_bool
+        cg.CGEventSourceButtonState.argtypes = [ctypes.c_int, ctypes.c_uint32]
+        cg.CGEventSourceKeyState.restype = ctypes.c_bool
+        cg.CGEventSourceKeyState.argtypes = [ctypes.c_int, ctypes.c_uint16]
+        _cg = cg
+    return _cg
+
+
+def _macos_key_down(vk: int) -> bool:
+    cg = _macos_cg()
+    if vk in _MAC_MOUSE_BUTTON:
+        return bool(cg.CGEventSourceButtonState(_CG_STATE_COMBINED, _MAC_MOUSE_BUTTON[vk]))
+    keycode = _MAC_KEYCODE.get(vk)
+    if keycode is None:
+        return False
+    return bool(cg.CGEventSourceKeyState(_CG_STATE_COMBINED, keycode))
+
 
 def _key_down(vk: int) -> bool:
     global _warned_no_ctypes
-    if not _IS_WINDOWS:
-        return False
     try:
-        import ctypes
+        if _IS_MACOS:
+            return _macos_key_down(vk)
+        if _IS_WINDOWS:
+            import ctypes
 
-        return bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)
+            return bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)
+        return False
     except Exception:
         if not _warned_no_ctypes:
-            log.debug("GetAsyncKeyState unavailable; drag input polling disabled.")
+            log.debug("HID key-state API unavailable; drag input polling disabled.")
             _warned_no_ctypes = True
         return False
 

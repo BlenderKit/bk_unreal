@@ -30,7 +30,7 @@ from qtpy.QtWidgets import (
 
 from ..core import auth, blender_runner
 from ..core.prefs import RESOLUTIONS, prefs
-from ..core.qt_host import get_qapp, parent_to_editor
+from ..core.qt_host import call_on_ui_thread, get_qapp, parent_to_editor
 
 log = logging.getLogger(__name__)
 
@@ -228,15 +228,18 @@ def open_settings() -> SettingsDialog | None:
         return None
 
     if _current_dialog is not None:
-        _current_dialog.show()
-        _current_dialog.raise_()
+        call_on_ui_thread(lambda: (_current_dialog.show(), _current_dialog.raise_()))
         return _current_dialog
 
-    dialog = SettingsDialog()
+    def _build() -> SettingsDialog:
+        dialog = SettingsDialog()
+        dialog.finished.connect(_on_closed)
+        dialog.show()
+        dialog.raise_()
+        return dialog
+
+    dialog = call_on_ui_thread(_build)
     parent_to_editor(dialog)
-    dialog.finished.connect(_on_closed)
-    dialog.show()
-    dialog.raise_()
     _current_dialog = dialog
     return dialog
 
