@@ -63,7 +63,26 @@ _warned_no_camera = False
 # position/color) - most noticeable on points far from the rotation pivot
 # (e.g. the forward arrow's tip) since they sweep a wider arc per tick than
 # points near the pivot (e.g. the bbox's own corners).
+#
+# The lifetime is scaled to the *actual* viewport render interval (see
+# :func:`_draw_duration`), which the C++ helper measures per real render.
+# Slate post-tick fires faster than the level viewport re-renders, so timing
+# our own ticks under-counts the interval and the lines expire before they're
+# ever drawn (invisible preview); a fixed value instead ghosts badly when the
+# viewport renders at high FPS. The render delta gives ~1 frame either way.
 _DRAW_DURATION = 0.05
+_MIN_DRAW_DURATION = 0.012  # ~1 frame floor at very high FPS
+_MAX_DRAW_DURATION = 0.2  # cap so a single frame hitch can't leave a long trail
+_DRAW_DURATION_MULT = 1.5  # > 1 so a line always survives to the next render
+
+
+def _draw_duration() -> float:
+    """Debug-line lifetime for this frame, scaled to the real render interval."""
+    dt = _render_delta()
+    if dt <= 0.0:
+        return _DRAW_DURATION
+    return max(_MIN_DRAW_DURATION, min(dt * _DRAW_DURATION_MULT, _MAX_DRAW_DURATION))
+
 
 # ``draw_debug_line``'s thickness is in *world* units (cm), unlike Maya's
 # MUIDrawManager which is always screen-space pixels - a fixed cm value reads
@@ -95,6 +114,20 @@ def _unreal() -> Any:
         return unreal
     except Exception:
         return None
+
+
+def _render_delta() -> float:
+    """Seconds between the two most recent real level-viewport renders (0 if n/a)."""
+    unreal_mod = _unreal()
+    if unreal_mod is None:
+        return 0.0
+    lib = getattr(unreal_mod, "BlendkitViewportLibrary", None)
+    if lib is None or not hasattr(lib, "get_last_render_delta"):
+        return 0.0
+    try:
+        return float(lib.get_last_render_delta())
+    except Exception:
+        return 0.0
 
 
 def _editor_world(unreal_mod: Any) -> Any:
@@ -874,7 +907,7 @@ def _draw_proxor_mesh(
                 unreal_mod.Vector(0.0, 0.0, 0.0),
                 unreal_mod.Rotator(0.0, 0.0, 0.0),
                 unreal_mod.Vector(1.0, 1.0, 1.0),
-                _DRAW_DURATION,
+                _draw_duration(),
             )
             return
         except Exception as exc:
@@ -883,7 +916,7 @@ def _draw_proxor_mesh(
     lib = getattr(unreal_mod, "BlendkitViewportLibrary", None)
     if lib is not None and hasattr(lib, "draw_debug_triangle_mesh"):
         try:
-            lib.draw_debug_triangle_mesh(world, verts, hologram_color, _DRAW_DURATION)
+            lib.draw_debug_triangle_mesh(world, verts, hologram_color, _draw_duration())
             return
         except Exception as exc:
             log.debug("BlendkitViewportLibrary.draw_debug_triangle_mesh failed: %s", exc)
@@ -908,7 +941,7 @@ def _draw_line(unreal_mod: Any, a: tuple, b: tuple, color: Any, thickness: float
             unreal_mod.Vector(*a),
             unreal_mod.Vector(*b),
             color,
-            _DRAW_DURATION,
+            _draw_duration(),
             thickness,
         )
     except Exception as exc:
