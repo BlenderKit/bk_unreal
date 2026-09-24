@@ -3,13 +3,15 @@
 # bk_client/) would confuse setuptools' flat-layout auto-discovery — the config
 # under [tool.setuptools] below scopes discovery to the Python package instead.
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "bk_unreal"
 description = "Blendkit for Unreal Engine — asset search, download and drag&drop inside the UE editor."
 requires-python = ">=3.11,<3.13"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 dynamic = ["version"]
 dependencies = [
     "requests>=2.18.4",
