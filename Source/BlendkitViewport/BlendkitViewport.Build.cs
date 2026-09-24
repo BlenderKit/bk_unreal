@@ -23,6 +23,17 @@ public class BlendkitViewport : ModuleRules
 			"LevelEditor",
 			"Slate",
 			"SlateCore",
+			// Native (Slate) asset-bar prototype:
+			"InputCore",          // key/mouse enums for drag detection
+			"ImageWrapper",       // decode downloaded thumbnails into Slate brushes
+			"WorkspaceMenuStructure", // dockable tab menu group
 		});
+
+		// The macOS scroll guard (BlendkitViewportScrollGuardMac.mm) uses AppKit
+		// to intercept scroll events over our external Qt windows.
+		if (Target.Platform == UnrealTargetPlatform.Mac)
+		{
+			PublicFrameworks.Add("AppKit");
+		}
 	}
 }

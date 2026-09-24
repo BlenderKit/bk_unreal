@@ -76,4 +76,17 @@ public:
 	 * Call with true at drag start, false at drag end/cancel. */
 	UFUNCTION(BlueprintCallable, Category = "Blendkit|Viewport")
 	static void SetPlacementRealtimeOverride(bool bEnabled);
+
+	/** Seconds between the two most recent *actual* level-viewport renders.
+	 *
+	 * Debug lines/meshes expire against world time, so their lifetime must
+	 * exceed the real render interval or they vanish before the viewport ever
+	 * draws them. Slate post-tick fires faster than the level viewport
+	 * actually re-renders (especially while the cursor is over another panel),
+	 * so Python cannot derive this by timing its own tick callbacks - it must
+	 * read the true frame delta, measured here inside the per-render
+	 * ``UDebugDrawService`` callback. Returns 0 until at least two renders have
+	 * happened (callers should fall back to a fixed lifetime then). */
+	UFUNCTION(BlueprintCallable, Category = "Blendkit|Viewport")
+	static float GetLastRenderDelta();
 };

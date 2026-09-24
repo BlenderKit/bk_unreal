@@ -323,6 +323,22 @@ class AssetTile(QFrame):
         )
 
 
+class _ScrollArea(QScrollArea):
+    """Thumbnail-grid scroll area that never lets a wheel event escape.
+
+    A plain ``QScrollArea`` *ignores* the wheel event once the scrollbar is at
+    its min/max, letting Qt bubble it up to the host. Inside the Unreal editor
+    that unhandled event reaches the level viewport, which orbits the camera
+    (most visible with macOS trackpad two-finger scrolling). Doing the scroll
+    ourselves and always ``accept()``-ing keeps it contained to this window.
+    """
+
+    def wheelEvent(self, event) -> None:  # Qt override
+        bar = self.verticalScrollBar()
+        bar.setValue(bar.value() - event.angleDelta().y())
+        event.accept()
+
+
 _current_bar: AssetBarWidget | None = None
 
 
@@ -394,7 +410,7 @@ class AssetBarWidget(QWidget):
         self.status = QLabel("")
         root.addWidget(self.status)
 
-        self.scroll = QScrollArea()
+        self.scroll = _ScrollArea()
         self.scroll.setWidgetResizable(True)
         self.grid_host = QWidget()
         self.grid = QGridLayout(self.grid_host)
