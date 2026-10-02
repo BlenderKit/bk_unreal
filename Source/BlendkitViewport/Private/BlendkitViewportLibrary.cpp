@@ -5,6 +5,7 @@
 #include "Engine/Engine.h"
 #include "Engine/Canvas.h"
 #include "CanvasItem.h"
+#include "Application/ThrottleManager.h"
 #include "Debug/DebugDrawService.h"
 #include "LevelEditorViewport.h"
 #include "SceneView.h"
@@ -25,6 +26,12 @@ namespace
 	bool GDebugTextServiceRegistered = false;
 	bool GPlacementRealtimeActive = false;
 
+	// Real render cadence, sampled once per engine frame inside the per-render
+	// debug-draw callback (see GetLastRenderDelta).
+	double GLastRenderTime = 0.0;
+	float GLastRenderDelta = 0.0f;
+	uint64 GLastRenderFrame = 0;
+
 	const FText& PlacementRealtimeOverrideName()
 	{
 		static const FText Name = FText::FromString(TEXT("BlendkitPlacement"));
@@ -37,6 +44,21 @@ namespace
 	// and is therefore a no-op with no PlayerController/HUD, i.e. outside PIE).
 	void DrawBlendkitDebugText(UCanvas* Canvas, APlayerController*)
 	{
+		// This callback runs from FEditorViewportClient::Draw, i.e. once per
+		// actual viewport render. Sample the frame delta here (guarded by the
+		// engine frame counter so multiple viewports in one frame don't collapse
+		// it to ~0) so Python can size debug-line lifetime to a real frame.
+		if (GFrameCounter != GLastRenderFrame)
+		{
+			const double Now = FPlatformTime::Seconds();
+			if (GLastRenderTime > 0.0)
+			{
+				GLastRenderDelta = static_cast<float>(Now - GLastRenderTime);
+			}
+			GLastRenderTime = Now;
+			GLastRenderFrame = GFrameCounter;
+		}
+
 		if (!GDebugTextState.bEnabled || Canvas == nullptr || GDebugTextState.Text.IsEmpty())
 		{
 			return;
@@ -200,6 +222,12 @@ void UBlendkitViewportLibrary::SetPlacementRealtimeOverride(bool bEnabled)
 	{
 		return;
 	}
+	// Slate throttles (suspends) editor viewport realtime updates while the
+	// user interacts with a Slate widget - so while dragging over the asset-bar
+	// panel the level viewport stops rendering entirely and the preview lines
+	// only appear once the mouse is released. Exempt our drag from throttling
+	// (ref-counted) so the viewport keeps ticking/drawing throughout.
+	FSlateThrottleManager::Get().DisableThrottle(bEnabled);
 	for (FEditorViewportClient* Client : GEditor->GetLevelViewportClients())
 	{
 		if (Client == nullptr)
@@ -216,4 +244,9 @@ void UBlendkitViewportLibrary::SetPlacementRealtimeOverride(bool bEnabled)
 		}
 	}
 	GPlacementRealtimeActive = bEnabled;
+}
+
+float UBlendkitViewportLibrary::GetLastRenderDelta()
+{
+	return GLastRenderDelta;
 }

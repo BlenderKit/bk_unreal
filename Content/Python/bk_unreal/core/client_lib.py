@@ -77,6 +77,7 @@ OAUTH_CLIENT_ID = "IdFRwa3SGA8eMpzhRVFMg5Ts8sPK93xBjif93x0F"
 POLL_CONNECT_TIMEOUT = 0.20
 POLL_READ_TIMEOUT = 0.50
 REQUEST_TIMEOUT = 5.0
+BLOCKING_DOWNLOAD_TIMEOUT = 60.0 * 60.0
 
 # ── Module state ─────────────────────────────────────────────────────────────
 
@@ -960,6 +961,7 @@ def blocking_file_download(file_url: str, file_path: str, *, api_key: str = "") 
         "POST",
         f"{get_base_url()}/wrappers/blocking_file_download",
         body=body,
+        read_timeout=BLOCKING_DOWNLOAD_TIMEOUT,
         allow_non_json=True,
     )
     return resp is not None

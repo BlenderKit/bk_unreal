@@ -15,15 +15,75 @@
                 "Development",
                 "-Project=${env:BK_TEST_UPROJECT}",
                 "-WaitMutex",
+                "-NoUBA",
                 "-FromMsBuild"
             ],
-            "problemMatcher": ["$msCompile"],
+            "osx": {
+                "command": "/Users/Shared/Epic Games/UE_5.8/Engine/Build/BatchFiles/Mac/Build.sh",
+                "args": [
+                    { "value": "$BK_TEST_UPROJECT_TARGET", "quoting": "weak" },
+                    "Mac",
+                    "Development",
+                    { "value": "-Project=$BK_TEST_UPROJECT", "quoting": "weak" },
+                    "-WaitMutex",
+                    "-NoUBA"
+                ]
+            },
+            "linux": {
+                "command": "${env:HOME}/UnrealEngine/Engine/Build/BatchFiles/Linux/Build.sh",
+                "args": [
+                    { "value": "$BK_TEST_UPROJECT_TARGET", "quoting": "weak" },
+                    "Linux",
+                    "Development",
+                    { "value": "-Project=$BK_TEST_UPROJECT", "quoting": "weak" },
+                    "-WaitMutex",
+                    "-NoUBA"
+                ]
+            },
+            "problemMatcher": ["$msCompile", "$gcc"],
             "presentation": {
                 "reveal": "always",
                 "panel": "shared",
                 "clear": true
             },
-            "detail": "Compiles the BlendkitViewport C++ module against the test project (matches 'Launch test project' in launch.json). Requires the BK_TEST_UPROJECT and BK_TEST_UPROJECT_TARGET environment variables to be set locally. Close the editor first - fails with 'Unable to build while Live Coding is active' otherwise (use Ctrl+Alt+F11 inside the editor instead for a quick hot-reload)."
+            "detail": "Compiles the BlendkitViewport C++ module against the test project (matches 'Launch test project' in launch.json). Requires the BK_TEST_UPROJECT and BK_TEST_UPROJECT_TARGET environment variables to be set locally. Uses -NoUBA because the plugin is junctioned/symlinked into the project, which makes Unreal Build Accelerator write object files to the real repo path but link from the junction path (fails with 'no such file or directory' on the .o files). Close the editor first - fails with 'Unable to build while Live Coding is active' otherwise (use Ctrl+Alt+F11 inside the editor instead for a quick hot-reload)."
+        },
+        {
+            "label": "Run test project (no debug, log to terminal)",
+            "type": "shell",
+            "dependsOn": "Build BlendkitViewport (test project, UE 5.8)",
+            "command": "C:/Program Files/Epic Games/UE_5.8/Engine/Binaries/Win64/UnrealEditor.exe",
+            "args": [
+                "${env:BK_TEST_UPROJECT}",
+                "-log",
+                "-stdout",
+                "-FullStdOutLogOutput"
+            ],
+            "osx": {
+                "command": "/Users/Shared/Epic Games/UE_5.8/Engine/Binaries/Mac/UnrealEditor.app/Contents/MacOS/UnrealEditor",
+                "args": [
+                    { "value": "$BK_TEST_UPROJECT", "quoting": "weak" },
+                    "-log",
+                    "-stdout",
+                    "-FullStdOutLogOutput"
+                ]
+            },
+            "linux": {
+                "command": "${env:HOME}/UnrealEngine/Engine/Binaries/Linux/UnrealEditor",
+                "args": [
+                    { "value": "$BK_TEST_UPROJECT", "quoting": "weak" },
+                    "-log",
+                    "-stdout",
+                    "-FullStdOutLogOutput"
+                ]
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "clear": true
+            },
+            "detail": "Builds the BlendkitViewport module then launches the UnrealEditor on the test project WITHOUT a debugger, streaming the engine log to this terminal. No C++ exception breakpoints. Close the editor before re-running so the build step is not blocked by Live Coding."
         }
     ]
 }

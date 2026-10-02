@@ -34,7 +34,9 @@ uninstalls a hook whose callback blocks the ~300 ms timeout) and only
 accumulates wheel deltas into a module-level counter, drained each tick by
 :func:`consume_wheel_delta`. On non-Windows platforms, or if the hook
 fails to install, Q/E key hold is used as a continuous-rotation fallback.
-Button-release/Escape are polled via ``GetAsyncKeyState`` each tick.
+Button-release/Escape are polled each tick via ``GetAsyncKeyState`` on Windows
+and CoreGraphics ``CGEventSource{Button,Key}State`` on macOS (both read live HID
+state; the Q/E rotation fallback uses the same path).
 """
 
 from __future__ import annotations
@@ -48,6 +50,7 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 _IS_WINDOWS = sys.platform == "win32"
+_IS_MACOS = sys.platform == "darwin"
 _DEFAULT_FOV_DEG = 90.0
 
 _warned_no_ctypes = False
@@ -60,7 +63,26 @@ _warned_no_camera = False
 # position/color) - most noticeable on points far from the rotation pivot
 # (e.g. the forward arrow's tip) since they sweep a wider arc per tick than
 # points near the pivot (e.g. the bbox's own corners).
+#
+# The lifetime is scaled to the *actual* viewport render interval (see
+# :func:`_draw_duration`), which the C++ helper measures per real render.
+# Slate post-tick fires faster than the level viewport re-renders, so timing
+# our own ticks under-counts the interval and the lines expire before they're
+# ever drawn (invisible preview); a fixed value instead ghosts badly when the
+# viewport renders at high FPS. The render delta gives ~1 frame either way.
 _DRAW_DURATION = 0.05
+_MIN_DRAW_DURATION = 0.012  # ~1 frame floor at very high FPS
+_MAX_DRAW_DURATION = 0.2  # cap so a single frame hitch can't leave a long trail
+_DRAW_DURATION_MULT = 1.5  # > 1 so a line always survives to the next render
+
+
+def _draw_duration() -> float:
+    """Debug-line lifetime for this frame, scaled to the real render interval."""
+    dt = _render_delta()
+    if dt <= 0.0:
+        return _DRAW_DURATION
+    return max(_MIN_DRAW_DURATION, min(dt * _DRAW_DURATION_MULT, _MAX_DRAW_DURATION))
+
 
 # ``draw_debug_line``'s thickness is in *world* units (cm), unlike Maya's
 # MUIDrawManager which is always screen-space pixels - a fixed cm value reads
@@ -92,6 +114,20 @@ def _unreal() -> Any:
         return unreal
     except Exception:
         return None
+
+
+def _render_delta() -> float:
+    """Seconds between the two most recent real level-viewport renders (0 if n/a)."""
+    unreal_mod = _unreal()
+    if unreal_mod is None:
+        return 0.0
+    lib = getattr(unreal_mod, "BlendkitViewportLibrary", None)
+    if lib is None or not hasattr(lib, "get_last_render_delta"):
+        return 0.0
+    try:
+        return float(lib.get_last_render_delta())
+    except Exception:
+        return 0.0
 
 
 def _editor_world(unreal_mod: Any) -> Any:
@@ -146,7 +182,7 @@ def uninstall_tick(handle: Any) -> None:
         log.debug("uninstall_tick failed: %s", exc)
 
 
-# ── input polling (ctypes, Windows-only) ────────────────────────────────────
+# ── input polling (ctypes: Win32 GetAsyncKeyState / macOS CoreGraphics) ─────
 
 _VK_LBUTTON = 0x01
 _VK_RBUTTON = 0x02
@@ -157,18 +193,54 @@ _VK_E = 0x45
 _prev_lmb = False
 _prev_rmb = False
 
+# macOS CoreGraphics HID polling, the counterpart to Win32 GetAsyncKeyState.
+# CGEventSourceButtonState / CGEventSourceKeyState read live hardware state from
+# any thread with no run loop; reading button/key state needs no Accessibility
+# grant (only event *taps* do). Win32 virtual-keys are mapped to macOS codes.
+_CG_STATE_COMBINED = 0  # kCGEventSourceStateCombinedSessionState
+_MAC_MOUSE_BUTTON = {_VK_LBUTTON: 0, _VK_RBUTTON: 1}  # kCGMouseButtonLeft/Right
+_MAC_KEYCODE = {_VK_ESCAPE: 53, _VK_Q: 12, _VK_E: 14}  # macOS virtual keycodes
+_cg: Any = None
+
+
+def _macos_cg() -> Any:
+    """Bind (once) the CoreGraphics HID-state functions used for input polling."""
+    global _cg
+    if _cg is None:
+        import ctypes
+
+        cg = ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+        cg.CGEventSourceButtonState.restype = ctypes.c_bool
+        cg.CGEventSourceButtonState.argtypes = [ctypes.c_int, ctypes.c_uint32]
+        cg.CGEventSourceKeyState.restype = ctypes.c_bool
+        cg.CGEventSourceKeyState.argtypes = [ctypes.c_int, ctypes.c_uint16]
+        _cg = cg
+    return _cg
+
+
+def _macos_key_down(vk: int) -> bool:
+    cg = _macos_cg()
+    if vk in _MAC_MOUSE_BUTTON:
+        return bool(cg.CGEventSourceButtonState(_CG_STATE_COMBINED, _MAC_MOUSE_BUTTON[vk]))
+    keycode = _MAC_KEYCODE.get(vk)
+    if keycode is None:
+        return False
+    return bool(cg.CGEventSourceKeyState(_CG_STATE_COMBINED, keycode))
+
 
 def _key_down(vk: int) -> bool:
     global _warned_no_ctypes
-    if not _IS_WINDOWS:
-        return False
     try:
-        import ctypes
+        if _IS_MACOS:
+            return _macos_key_down(vk)
+        if _IS_WINDOWS:
+            import ctypes
 
-        return bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)
+            return bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)
+        return False
     except Exception:
         if not _warned_no_ctypes:
-            log.debug("GetAsyncKeyState unavailable; drag input polling disabled.")
+            log.debug("HID key-state API unavailable; drag input polling disabled.")
             _warned_no_ctypes = True
         return False
 
@@ -835,7 +907,7 @@ def _draw_proxor_mesh(
                 unreal_mod.Vector(0.0, 0.0, 0.0),
                 unreal_mod.Rotator(0.0, 0.0, 0.0),
                 unreal_mod.Vector(1.0, 1.0, 1.0),
-                _DRAW_DURATION,
+                _draw_duration(),
             )
             return
         except Exception as exc:
@@ -844,7 +916,7 @@ def _draw_proxor_mesh(
     lib = getattr(unreal_mod, "BlendkitViewportLibrary", None)
     if lib is not None and hasattr(lib, "draw_debug_triangle_mesh"):
         try:
-            lib.draw_debug_triangle_mesh(world, verts, hologram_color, _DRAW_DURATION)
+            lib.draw_debug_triangle_mesh(world, verts, hologram_color, _draw_duration())
             return
         except Exception as exc:
             log.debug("BlendkitViewportLibrary.draw_debug_triangle_mesh failed: %s", exc)
@@ -869,7 +941,7 @@ def _draw_line(unreal_mod: Any, a: tuple, b: tuple, color: Any, thickness: float
             unreal_mod.Vector(*a),
             unreal_mod.Vector(*b),
             color,
-            _DRAW_DURATION,
+            _draw_duration(),
             thickness,
         )
     except Exception as exc:

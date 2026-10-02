@@ -42,6 +42,11 @@ INI_SECTION = "[/Script/PythonScriptPlugin.PythonScriptPluginSettings]"
 
 def _resolve_project_dir(project: str) -> str:
     """Return the project directory from a .uproject path or a folder path."""
+    project = project.strip().strip('"').strip("'")
+    # Tolerate shell-escaped paths pasted into the prompt (e.g. "Unreal\ Projects"):
+    # launch.json args are not run through a shell, so the backslashes stay literal.
+    if not os.path.exists(project) and os.path.exists(project.replace("\\ ", " ")):
+        project = project.replace("\\ ", " ")
     project = os.path.abspath(project)
     if os.path.isfile(project) and project.endswith(".uproject"):
         return os.path.dirname(project)

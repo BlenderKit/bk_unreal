@@ -379,8 +379,48 @@ def install_local_client_bundle(bundle_path: str, client_dir: str) -> str:
 # ── Package ───────────────────────────────────────────────────────────────────
 
 
-# bk_client holds the Go sources; only the built `client/` binaries ship.
-_EXCLUDE_DIRS = {"__pycache__", ".git", ".venv", ".ruff_cache", ".pytest_cache", "out", "_debug", "tests", "bk_client"}
+# Directories that never ship in the plugin zip: caches, the venv, VCS/editor
+# metadata, C++ build intermediates, the dev-only tests, and the bk_client Go
+# sources (only the built `client/` binaries ship).
+_EXCLUDE_DIRS = {
+    "__pycache__",
+    ".git",
+    ".github",
+    ".venv",
+    ".vscode",
+    ".ruff_cache",
+    ".pytest_cache",
+    "out",
+    "tmp",
+    "_debug",
+    "tests",
+    "bk_client",
+    "Intermediate",
+}
+
+# Dev-only root files that must not ship in the plugin zip (linter/formatter
+# configs, packaging metadata, dev docs, the dev CLI itself).
+_EXCLUDE_FILES = {
+    "_bandit.yaml",
+    "codecov.yml",
+    "dev.py",
+    "pyproject.toml",
+    "pdm.lock",
+    "CONTRIBUTING.md",
+    "AGENTS.md",
+}
+
+
+def _skip_from_zip(name: str) -> bool:
+    """Return True for files that must not ship in the plugin zip."""
+    # Ship only the loose per-platform binaries, not the redundant bk_client.zip
+    # release bundle they were unpacked from.
+    return (
+        name == "bk_client.zip"
+        or name in _EXCLUDE_FILES
+        or name.startswith(".")
+        or name.endswith((".pyc", ".coverage"))
+    )
 
 
 def build_zip(version: str) -> str:
@@ -389,11 +429,11 @@ def build_zip(version: str) -> str:
     zip_path = os.path.join(OUT_DIR, f"Blendkit-{version}.zip")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for root, dirs, files in os.walk(REPO_ROOT):
-            dirs[:] = [d for d in dirs if d not in _EXCLUDE_DIRS and not d.startswith(".git")]
+            dirs[:] = [
+                d for d in dirs if d not in _EXCLUDE_DIRS and not d.startswith(".git") and not d.endswith(".egg-info")
+            ]
             for name in files:
-                # Ship only the loose per-platform binaries, not the redundant
-                # bk_client.zip release bundle they were unpacked from.
-                if name == "bk_client.zip":
+                if _skip_from_zip(name):
                     continue
                 abs_path = os.path.join(root, name)
                 rel = os.path.relpath(abs_path, REPO_ROOT)

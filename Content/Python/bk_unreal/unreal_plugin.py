@@ -32,6 +32,16 @@ def _open_asset_bar_impl() -> None:
     asset_bar.open_asset_bar()
 
 
+def _open_native_asset_bar_impl() -> None:
+    """Open the native (Slate) asset bar prototype (no Qt)."""
+    try:
+        from .ui_native import asset_bar_native
+    except Exception as exc:
+        log.error("Failed to import native asset bar UI: %s", exc)
+        return
+    asset_bar_native.open_native_asset_bar()
+
+
 def _open_settings_impl() -> None:
     """Import lazily so a missing Qt vendor dir doesn't break registration."""
     try:
@@ -74,6 +84,19 @@ def _register_menu() -> None:
         "from bk_unreal import unreal_plugin as _p; _p._open_asset_bar_impl()",
     )
     bk_menu.add_menu_entry("Actions", entry)
+
+    native_entry = unreal.ToolMenuEntry(
+        name="Blendkit.OpenAssetBarNative",
+        type=unreal.MultiBlockType.MENU_ENTRY,
+    )
+    native_entry.set_label("Open Asset Bar (Native)")
+    native_entry.set_tool_tip("Search and browse Blendkit assets in a native Slate panel (experimental)")
+    native_entry.set_string_command(
+        unreal.ToolMenuStringCommandType.PYTHON,
+        "",
+        "from bk_unreal import unreal_plugin as _p; _p._open_native_asset_bar_impl()",
+    )
+    bk_menu.add_menu_entry("Actions", native_entry)
 
     settings_entry = unreal.ToolMenuEntry(
         name="Blendkit.OpenSettings",
