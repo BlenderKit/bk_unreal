@@ -236,7 +236,7 @@ def _github_headers() -> dict:
 
 
 def read_client_version_pin() -> str:
-    """Read the pinned Client minor series (e.g. ``v1.12``) from global_vars.py."""
+    """Read the pinned Client minor series (e.g. ``v1.13``) from global_vars.py."""
     global_vars_py = os.path.join(PKG_DIR, "core", "global_vars.py")
     with open(global_vars_py, encoding="utf-8") as fh:
         match = re.search(r'^CLIENT_VERSION\s*[:=].*?"([^"]+)"', fh.read(), re.MULTILINE)
