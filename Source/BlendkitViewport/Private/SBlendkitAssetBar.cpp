@@ -11,12 +11,15 @@
 #include "Modules/ModuleManager.h"
 #include "Rendering/SlateRenderer.h"
 #include "Styling/CoreStyle.h"
+#include "HAL/PlatformApplicationMisc.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SComboBox.h"
 #include "Widgets/Input/SSearchBox.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SBorder.h"
+#include "Widgets/Layout/SScrollBox.h"
+#include "Widgets/Layout/SSpacer.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/SOverlay.h"
 #include "Widgets/Text/STextBlock.h"
@@ -79,6 +82,260 @@ namespace
 		return MakeShareable(new FSlateDynamicImageBrush(ResourceName, FVector2D(Width, Height)));
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Asset Detail Dialog
+// ---------------------------------------------------------------------------
+
+class SBlendkitAssetDetail : public SCompoundWidget
+{
+public:
+	SLATE_BEGIN_ARGS(SBlendkitAssetDetail) {}
+		SLATE_ARGUMENT(TSharedPtr<FBlendkitTileItem>, Item)
+		SLATE_ARGUMENT(TSharedPtr<SWindow>, ParentWindow)
+	SLATE_END_ARGS()
+
+	void Construct(const FArguments& InArgs)
+	{
+		Item = InArgs._Item;
+		ParentWindow = InArgs._ParentWindow;
+
+		TSharedRef<SVerticalBox> InfoBox = SNew(SVerticalBox);
+
+		auto AddRow = [&InfoBox](const FText& Label, const FString& Value, const FSlateColor& Color = FSlateColor::UseForeground())
+		{
+			if (!Value.IsEmpty())
+			{
+				InfoBox->AddSlot()
+				.AutoHeight()
+				.Padding(0.f, 2.f)
+				[
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot()
+					.AutoWidth()
+					[
+						SNew(STextBlock)
+						.Text(Label)
+						.Font(FCoreStyle::GetDefaultFontStyle("Bold", 9))
+						.ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f)))
+					]
+					+ SHorizontalBox::Slot()
+					.FillWidth(1.f)
+					.Padding(8.f, 0.f, 0.f, 0.f)
+					[
+						SNew(STextBlock)
+						.Text(FText::FromString(Value))
+						.Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
+						.ColorAndOpacity(Color)
+						.AutoWrapText(true)
+					]
+				];
+			}
+		};
+
+		const FString PriceText = Item.IsValid() && !Item->Price.IsEmpty() ? Item->Price : TEXT("—");
+		const FSlateColor PriceColor = (PriceText == TEXT("FREE")) ? FSlateColor(FLinearColor(0.2f, 0.85f, 0.3f)) : FSlateColor::UseForeground();
+
+		AddRow(LOCTEXT("DetailType", "Type:"), Item.IsValid() ? Item->AssetType.ToUpper() : TEXT(""));
+		AddRow(LOCTEXT("DetailAuthor", "Author:"), Item.IsValid() ? Item->AuthorName : TEXT(""));
+		AddRow(LOCTEXT("DetailPrice", "Price:"), PriceText, PriceColor);
+		AddRow(LOCTEXT("DetailLicense", "License:"), Item.IsValid() ? Item->License : TEXT(""));
+		AddRow(LOCTEXT("DetailRating", "Rating:"), Item.IsValid() && !Item->Rating.IsEmpty() ? FString::Printf(TEXT("\u2605 %s"), *Item->Rating) : TEXT(""));
+		AddRow(LOCTEXT("DetailDownloads", "Downloads:"), Item.IsValid() ? Item->DownloadCount : TEXT(""));
+
+		const FString Desc = Item.IsValid() && !Item->Description.IsEmpty() ? Item->Description : TEXT("No description provided.");
+
+		ChildSlot
+		[
+			SNew(SBorder)
+			.Padding(16.f)
+			.BorderImage(FCoreStyle::Get().GetBrush("ToolPanel.GroupBorder"))
+			[
+				SNew(SVerticalBox)
+				// Title
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				.Padding(0.f, 0.f, 0.f, 12.f)
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(Item.IsValid() ? Item->Name : TEXT("Asset Detail")))
+					.Font(FCoreStyle::GetDefaultFontStyle("Bold", 14))
+					.AutoWrapText(true)
+				]
+				// Header row: Large thumbnail + Quick info
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				.Padding(0.f, 0.f, 0.f, 12.f)
+				[
+					SNew(SHorizontalBox)
+					// Thumbnail
+					+ SHorizontalBox::Slot()
+					.AutoWidth()
+					[
+						SNew(SBox)
+						.WidthOverride(180.f)
+						.HeightOverride(180.f)
+						[
+							SNew(SBorder)
+							.BorderBackgroundColor(FLinearColor(0.1f, 0.1f, 0.1f))
+							.Padding(2.f)
+							[
+								SNew(SImage)
+								.Image_Lambda([this]() -> const FSlateBrush*
+								{
+									return (Item.IsValid() && Item->Brush.IsValid()) ? Item->Brush.Get() : nullptr;
+								})
+							]
+						]
+					]
+					// Info list
+					+ SHorizontalBox::Slot()
+					.FillWidth(1.f)
+					.Padding(16.f, 0.f, 0.f, 0.f)
+					[
+						InfoBox
+					]
+				]
+				// Description header
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				.Padding(0.f, 6.f, 0.f, 4.f)
+				[
+					SNew(STextBlock)
+					.Text(LOCTEXT("DescriptionHeading", "Description"))
+					.Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
+				]
+				// Description box
+				+ SVerticalBox::Slot()
+				.FillHeight(1.f)
+				.Padding(0.f, 0.f, 0.f, 8.f)
+				[
+					SNew(SBorder)
+					.BorderBackgroundColor(FLinearColor(0.08f, 0.08f, 0.08f, 0.8f))
+					.Padding(8.f)
+					[
+						SNew(SScrollBox)
+						+ SScrollBox::Slot()
+						[
+							SNew(STextBlock)
+							.Text(FText::FromString(Desc))
+							.Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
+							.ColorAndOpacity(FSlateColor(FLinearColor(0.85f, 0.85f, 0.85f)))
+							.AutoWrapText(true)
+						]
+					]
+				]
+				// Tags
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				.Padding(0.f, 0.f, 0.f, 12.f)
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(Item.IsValid() && !Item->Tags.IsEmpty() ? FString::Printf(TEXT("Tags: %s"), *Item->Tags) : TEXT("")))
+					.Font(FCoreStyle::GetDefaultFontStyle("Italic", 8))
+					.ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f)))
+					.AutoWrapText(true)
+				]
+				// Action buttons
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				[
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot()
+					.AutoWidth()
+					[
+						SNew(SButton)
+						.Text_Lambda([this]()
+						{
+							return (Item.IsValid() && Item->bBookmarked) ? LOCTEXT("DetailRemoveBookmark", "★ Bookmarked") : LOCTEXT("DetailAddBookmark", "☆ Add Bookmark");
+						})
+						.OnClicked_Lambda([this]()
+						{
+							if (Item.IsValid())
+							{
+								if (UBlendkitBridge* Bridge = UBlendkitBridge::Get())
+								{
+									Bridge->OnBookmarkToggled.Broadcast(Item->AssetId);
+								}
+								Item->bBookmarked = !Item->bBookmarked;
+							}
+							return FReply::Handled();
+						})
+					]
+					+ SHorizontalBox::Slot()
+					.AutoWidth()
+					.Padding(8.f, 0.f, 0.f, 0.f)
+					[
+						SNew(SButton)
+						.Visibility_Lambda([this]()
+						{
+							return (Item.IsValid() && !Item->AuthorName.IsEmpty()) ? EVisibility::Visible : EVisibility::Collapsed;
+						})
+						.Text(LOCTEXT("DetailAuthorSearch", "More by Author"))
+						.OnClicked_Lambda([this]()
+						{
+							if (Item.IsValid())
+							{
+								if (UBlendkitBridge* Bridge = UBlendkitBridge::Get())
+								{
+									const FString Query = Item->AuthorId.IsEmpty() ? Item->AuthorName : FString::Printf(TEXT("author_id:%s"), *Item->AuthorId);
+									Bridge->OnSearchRequested.Broadcast(Query, Item->AssetType);
+								}
+								if (TSharedPtr<SWindow> Win = ParentWindow.Pin())
+								{
+									Win->RequestDestroyWindow();
+								}
+							}
+							return FReply::Handled();
+						})
+					]
+					+ SHorizontalBox::Slot()
+					.FillWidth(1.f)
+					[
+						SNew(SSpacer)
+					]
+					+ SHorizontalBox::Slot()
+					.AutoWidth()
+					.Padding(8.f, 0.f, 0.f, 0.f)
+					[
+						SNew(SButton)
+						.Text(LOCTEXT("DetailOpenWeb", "View on Blendkit.com"))
+						.OnClicked_Lambda([this]()
+						{
+							if (Item.IsValid())
+							{
+								if (UBlendkitBridge* Bridge = UBlendkitBridge::Get())
+								{
+									Bridge->OnAssetActivated.Broadcast(Item->AssetId);
+								}
+							}
+							return FReply::Handled();
+						})
+					]
+					+ SHorizontalBox::Slot()
+					.AutoWidth()
+					.Padding(8.f, 0.f, 0.f, 0.f)
+					[
+						SNew(SButton)
+						.Text(LOCTEXT("DetailClose", "Close"))
+						.OnClicked_Lambda([this]()
+						{
+							if (TSharedPtr<SWindow> Win = ParentWindow.Pin())
+							{
+								Win->RequestDestroyWindow();
+							}
+							return FReply::Handled();
+						})
+					]
+				]
+			]
+		];
+	}
+
+private:
+	TSharedPtr<FBlendkitTileItem> Item;
+	TWeakPtr<SWindow> ParentWindow;
+};
 
 // ---------------------------------------------------------------------------
 // Tile
@@ -182,10 +439,7 @@ public:
 	{
 		if (Item.IsValid())
 		{
-			if (UBlendkitBridge* Bridge = UBlendkitBridge::Get())
-			{
-				Bridge->OnAssetActivated.Broadcast(Item->AssetId);
-			}
+			OpenDetailWindow();
 		}
 		return FReply::Handled();
 	}
@@ -199,6 +453,14 @@ public:
 			const bool bBookmarked = Item->bBookmarked;
 
 			Menu.AddMenuEntry(
+				LOCTEXT("ViewDetails", "View details…"),
+				LOCTEXT("ViewDetailsTip", "Open the asset detail popup with larger preview and information"),
+				FSlateIcon(),
+				FUIAction(FExecuteAction::CreateSP(this, &SBlendkitAssetTile::OpenDetailWindow)));
+
+			Menu.AddSeparator();
+
+			Menu.AddMenuEntry(
 				bBookmarked ? LOCTEXT("RemoveBookmark", "Remove bookmark") : LOCTEXT("AddBookmark", "Add bookmark"),
 				FText::GetEmpty(), FSlateIcon(),
 				FUIAction(FExecuteAction::CreateLambda([AssetId]()
@@ -208,6 +470,23 @@ public:
 						Bridge->OnBookmarkToggled.Broadcast(AssetId);
 					}
 				})));
+
+			if (!Item->AuthorName.IsEmpty())
+			{
+				const FString AuthorQuery = Item->AuthorId.IsEmpty() ? Item->AuthorName : FString::Printf(TEXT("author_id:%s"), *Item->AuthorId);
+				const FString Type = Item->AssetType;
+				Menu.AddMenuEntry(
+					FText::Format(LOCTEXT("ShowMoreByAuthor", "More by '{0}'"), FText::FromString(Item->AuthorName)),
+					LOCTEXT("ShowMoreByAuthorTip", "Search for assets created by this author"),
+					FSlateIcon(),
+					FUIAction(FExecuteAction::CreateLambda([AuthorQuery, Type]()
+					{
+						if (UBlendkitBridge* Bridge = UBlendkitBridge::Get())
+						{
+							Bridge->OnSearchRequested.Broadcast(AuthorQuery, Type);
+						}
+					})));
+			}
 
 			Menu.AddMenuEntry(
 				LOCTEXT("OpenWebsite", "Open on blendkit.org"),
@@ -220,6 +499,25 @@ public:
 					}
 				})));
 
+			Menu.AddSeparator();
+
+			const FString AssetName = Item->Name;
+			Menu.AddMenuEntry(
+				LOCTEXT("CopyName", "Copy name"),
+				FText::GetEmpty(), FSlateIcon(),
+				FUIAction(FExecuteAction::CreateLambda([AssetName]()
+				{
+					FPlatformApplicationMisc::ClipboardCopy(*AssetName);
+				})));
+
+			Menu.AddMenuEntry(
+				LOCTEXT("CopyAssetId", "Copy asset ID"),
+				FText::GetEmpty(), FSlateIcon(),
+				FUIAction(FExecuteAction::CreateLambda([AssetId]()
+				{
+					FPlatformApplicationMisc::ClipboardCopy(*AssetId);
+				})));
+
 			FWidgetPath WidgetPath;
 			FSlateApplication::Get().GeneratePathToWidgetUnchecked(SharedThis(this), WidgetPath);
 			FSlateApplication::Get().PushMenu(
@@ -229,6 +527,37 @@ public:
 			return FReply::Handled();
 		}
 		return FReply::Unhandled();
+	}
+
+	void OpenDetailWindow()
+	{
+		if (!Item.IsValid())
+		{
+			return;
+		}
+
+		TSharedRef<SWindow> Window = SNew(SWindow)
+			.Title(FText::Format(LOCTEXT("AssetDetailTitle", "Blendkit — {0}"), FText::FromString(Item->Name)))
+			.ClientSize(FVector2D(540.f, 520.f))
+			.SupportsMaximize(false)
+			.SupportsMinimize(false)
+			.SizingRule(ESizingRule::UserSized);
+
+		Window->SetContent(
+			SNew(SBlendkitAssetDetail)
+			.Item(Item)
+			.ParentWindow(Window)
+		);
+
+		TSharedPtr<SWindow> ParentWindow = FSlateApplication::Get().FindWidgetWindow(SharedThis(this));
+		if (ParentWindow.IsValid())
+		{
+			FSlateApplication::Get().AddWindowAsNativeChild(Window, ParentWindow.ToSharedRef());
+		}
+		else
+		{
+			FSlateApplication::Get().AddWindow(Window);
+		}
 	}
 
 private:
@@ -403,6 +732,14 @@ void SBlendkitAssetBar::RebuildItems()
 			Tile->Name = Src.Name;
 			Tile->bCanDownload = Src.bCanDownload;
 			Tile->bBookmarked = Src.bBookmarked;
+			Tile->Description = Src.Description;
+			Tile->AuthorName = Src.AuthorName;
+			Tile->AuthorId = Src.AuthorId;
+			Tile->License = Src.License;
+			Tile->Price = Src.Price;
+			Tile->Rating = Src.Rating;
+			Tile->DownloadCount = Src.DownloadCount;
+			Tile->Tags = Src.Tags;
 			if (!Tile->Brush.IsValid() && !Src.ThumbnailPath.IsEmpty())
 			{
 				Tile->ThumbnailPath = Src.ThumbnailPath;

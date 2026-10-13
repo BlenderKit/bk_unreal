@@ -192,3 +192,43 @@ def test_login_worker_reports_exceptions(monkeypatch):
     results = []
     settings.auth.login_async(results.append)
     assert results == [False]
+
+
+def test_make_item_extracts_metadata(monkeypatch):
+    """Ensure _make_item populates author, license, price, rating, and description."""
+    from bk_unreal.ui_native import asset_bar_native
+
+    created_items = []
+
+    class MockItem:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+            created_items.append(self)
+
+    monkeypatch.setitem(sys.modules, "unreal", SimpleNamespace(BlendkitAssetItem=MockItem))
+
+    asset = {
+        "assetBaseId": "asset-123",
+        "name": "Cozy Armchair",
+        "assetType": "model",
+        "description": "A very comfortable armchair.",
+        "author": {"fullName": "Jane Doe", "id": 42},
+        "isFree": True,
+        "license": "CC-BY",
+        "ratingsAverage": {"quality": 4.8},
+        "ratingsCount": {"quality": 10},
+        "downloadCount": 1500,
+        "tags": ["chair", "furniture", "living room"],
+    }
+
+    item = asset_bar_native._make_item(asset)
+    assert item.asset_id == "asset-123"
+    assert item.name == "Cozy Armchair"
+    assert item.author_name == "Jane Doe"
+    assert item.author_id == "42"
+    assert item.price == "FREE"
+    assert item.license == "CC-BY"
+    assert "4.8" in item.rating
+    assert item.download_count == "1500"
+    assert "furniture" in item.tags
+    assert item.description == "A very comfortable armchair."

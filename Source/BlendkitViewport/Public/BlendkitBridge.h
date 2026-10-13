@@ -42,6 +42,30 @@ struct FBlendkitAssetItem
 
 	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
 	FString ThumbnailPath;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
+	FString Description;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
+	FString AuthorName;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
+	FString AuthorId;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
+	FString License;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
+	FString Price;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
+	FString Rating;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
+	FString DownloadCount;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
+	FString Tags;
 };
 
 USTRUCT(BlueprintType)

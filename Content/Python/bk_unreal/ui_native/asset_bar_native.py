@@ -101,6 +101,27 @@ def _make_item(asset: dict[str, Any]):
     import unreal
 
     asset_id = str(asset.get("assetBaseId") or asset.get("id") or "")
+    author = asset.get("author") or {}
+    if not isinstance(author, dict):
+        author = {}
+    author_name = str(author.get("fullName") or asset.get("authorUsername") or "")
+    author_id = str(author.get("id") or "")
+
+    is_free = bool(asset.get("isFree", False))
+    price_val = asset.get("priceExVatFormatted") or asset.get("price")
+    price_str = "FREE" if is_free else (str(price_val) if price_val else "")
+
+    rat_avg = asset.get("ratingsAverage") or {}
+    avg_q = rat_avg.get("quality") if isinstance(rat_avg, dict) else rat_avg
+    rat_cnt = asset.get("ratingsCount") or {}
+    cnt_q = rat_cnt.get("quality") if isinstance(rat_cnt, dict) else rat_cnt
+    try:
+        rating_str = f"{float(avg_q):.1f} ({cnt_q or 0})" if avg_q else ""
+    except (ValueError, TypeError):
+        rating_str = ""
+
+    tags = ", ".join(str(t) for t in (asset.get("tags") or [])[:15])
+
     return unreal.BlendkitAssetItem(
         asset_id=asset_id,
         name=str(asset.get("name") or ""),
@@ -108,6 +129,14 @@ def _make_item(asset: dict[str, Any]):
         can_download=bool(asset.get("canDownload", True)),
         bookmarked=bk_bookmarks.is_bookmarked(asset_id),
         thumbnail_path=_thumb_for(asset),
+        description=str(asset.get("description") or ""),
+        author_name=author_name,
+        author_id=author_id,
+        license=str(asset.get("license") or ""),
+        price=price_str,
+        rating=rating_str,
+        download_count=str(asset.get("downloadCount") or ""),
+        tags=tags,
     )
 
 
