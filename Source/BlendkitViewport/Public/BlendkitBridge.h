@@ -1,4 +1,4 @@
-// Python <-> Slate seam for the native Blendkit asset bar prototype.
+// Python <-> Slate bridge for the native Blendkit editor UI.
 //
 // The Slate UI (SBlendkitAssetBar) is pure presentation; all data and actions
 // still flow through the existing engine-agnostic Python core (client_lib,
@@ -6,7 +6,7 @@
 //
 //   * Slate -> Python : dynamic multicast delegates the Python glue binds to
 //     (search requested, drag started, bookmark toggled, ...). Slate broadcasts
-//     them; Python reacts using the same core/ code the Qt UI uses.
+//     them; Python reacts using the engine-agnostic core.
 //   * Python -> Slate : BlueprintCallable UFUNCTIONs Python calls to push
 //     results / thumbnails / status. These fire native (C++) multicast
 //     delegates the Slate widget listens to.
@@ -44,10 +44,48 @@ struct FBlendkitAssetItem
 	FString ThumbnailPath;
 };
 
+USTRUCT(BlueprintType)
+struct FBlendkitSettings
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
+	FString GlobalDir;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
+	FString BlenderExecutable;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
+	FString Resolution = TEXT("ORIGINAL");
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
+	bool bVerifySsl = true;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
+	bool bLoggedIn = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
+	bool bLoginPending = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
+	bool bBlenderPending = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
+	FString AccountStatus;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
+	FString BlenderStatus;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
+	FString Message;
+};
+
 // Slate -> Python.
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBlendkitSearchRequested, const FString&, Query, const FString&, AssetType);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBlendkitAssetAction, const FString&, AssetId);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FBlendkitSimpleAction);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBlendkitSettingsAction, const FBlendkitSettings&, Settings);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBlendkitTextAction, const FString&, Text);
 
 // Python -> Slate (native, not reflected).
 DECLARE_MULTICAST_DELEGATE(FBlendkitResultsChanged);
@@ -67,6 +105,12 @@ public:
 	/** Open (or focus) the native asset-bar dockable tab. */
 	UFUNCTION(BlueprintCallable, Category = "Blendkit")
 	void OpenTab();
+
+	UFUNCTION(BlueprintCallable, Category = "Blendkit")
+	void OpenSettingsTab();
+
+	UFUNCTION(BlueprintCallable, Category = "Blendkit")
+	void SetSettings(const FBlendkitSettings& InSettings);
 
 	/** Replace the current result set (called from Python after a search). */
 	UFUNCTION(BlueprintCallable, Category = "Blendkit")
@@ -97,6 +141,24 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Blendkit")
 	FBlendkitSimpleAction OnLoadMoreRequested;
 
+	UPROPERTY(BlueprintAssignable, Category = "Blendkit")
+	FBlendkitSimpleAction OnSettingsRequested;
+
+	UPROPERTY(BlueprintAssignable, Category = "Blendkit")
+	FBlendkitSettingsAction OnSettingsSaved;
+
+	UPROPERTY(BlueprintAssignable, Category = "Blendkit")
+	FBlendkitSimpleAction OnLoginRequested;
+
+	UPROPERTY(BlueprintAssignable, Category = "Blendkit")
+	FBlendkitSimpleAction OnLogoutRequested;
+
+	UPROPERTY(BlueprintAssignable, Category = "Blendkit")
+	FBlendkitTextAction OnManualKeyRequested;
+
+	UPROPERTY(BlueprintAssignable, Category = "Blendkit")
+	FBlendkitTextAction OnBlenderDetectRequested;
+
 	// Python -> Slate (Slate binds in C++).
 	FBlendkitResultsChanged OnResultsChanged;
 	FBlendkitThumbnailChanged OnThumbnailChanged;
@@ -104,8 +166,12 @@ public:
 
 	const TArray<FBlendkitAssetItem>& GetResults() const { return Results; }
 	const FString& GetStatus() const { return Status; }
+	const FBlendkitSettings& GetSettings() const { return Settings; }
 
 private:
+	UPROPERTY()
+	FBlendkitSettings Settings;
+
 	UPROPERTY()
 	TArray<FBlendkitAssetItem> Results;
 

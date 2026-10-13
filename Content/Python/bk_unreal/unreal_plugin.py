@@ -1,8 +1,7 @@
 """Blendkit Unreal plugin registration.
 
 Called by ``Content/Python/init_unreal.py`` at editor startup. Configures
-logging and adds a **Blendkit** menu to the Unreal main menu bar (via
-``unreal.ToolMenus``) with an *Open Asset Bar* action.
+logging and adds a **Blendkit** menu with native Slate asset and settings tabs.
 
 All Unreal API access is deferred and guarded so importing this module outside
 the editor (e.g. in the test suite) never fails.
@@ -23,17 +22,7 @@ _registered = False
 
 
 def _open_asset_bar_impl() -> None:
-    """Import lazily so a missing Qt vendor dir doesn't break registration."""
-    try:
-        from .ui import asset_bar
-    except Exception as exc:
-        log.error("Failed to import asset bar UI: %s", exc)
-        return
-    asset_bar.open_asset_bar()
-
-
-def _open_native_asset_bar_impl() -> None:
-    """Open the native (Slate) asset bar prototype (no Qt)."""
+    """Open the native Slate asset browser."""
     try:
         from .ui_native import asset_bar_native
     except Exception as exc:
@@ -43,13 +32,13 @@ def _open_native_asset_bar_impl() -> None:
 
 
 def _open_settings_impl() -> None:
-    """Import lazily so a missing Qt vendor dir doesn't break registration."""
+    """Open the native Slate preferences tab."""
     try:
-        from .ui import settings_dialog
+        from .ui_native import settings
     except Exception as exc:
         log.error("Failed to import settings UI: %s", exc)
         return
-    settings_dialog.open_settings()
+    settings.open_settings()
 
 
 def _register_menu() -> None:
@@ -85,19 +74,6 @@ def _register_menu() -> None:
     )
     bk_menu.add_menu_entry("Actions", entry)
 
-    native_entry = unreal.ToolMenuEntry(
-        name="Blendkit.OpenAssetBarNative",
-        type=unreal.MultiBlockType.MENU_ENTRY,
-    )
-    native_entry.set_label("Open Asset Bar (Native)")
-    native_entry.set_tool_tip("Search and browse Blendkit assets in a native Slate panel (experimental)")
-    native_entry.set_string_command(
-        unreal.ToolMenuStringCommandType.PYTHON,
-        "",
-        "from bk_unreal import unreal_plugin as _p; _p._open_native_asset_bar_impl()",
-    )
-    bk_menu.add_menu_entry("Actions", native_entry)
-
     settings_entry = unreal.ToolMenuEntry(
         name="Blendkit.OpenSettings",
         type=unreal.MultiBlockType.MENU_ENTRY,
@@ -111,41 +87,6 @@ def _register_menu() -> None:
     )
     bk_menu.add_menu_entry("Actions", settings_entry)
     menus.refresh_all_widgets()
-
-
-def _warm_start_ui() -> None:
-    """Pre-import Qt and build the QApplication so the first menu click is fast.
-
-    Importing PySide6 and creating the ``QApplication`` costs a noticeable
-    pause; doing it here (on the editor thread, a few frames after startup)
-    moves that cost off the user's first *Open Asset Bar* click.
-    """
-    try:
-        from .core.qt_host import get_qapp
-        from .ui import asset_bar  # noqa: F401  (import cost is the point)
-
-        get_qapp()
-    except Exception as exc:
-        log.debug("Qt warm start skipped: %s", exc)
-
-
-def _schedule_warm_start(delay_seconds: float = 3.0) -> None:
-    """Run :func:`_warm_start_ui` once, *delay_seconds* into the editor's tick."""
-    import unreal
-
-    state = {"elapsed": 0.0, "handle": None}
-
-    def _tick(delta_seconds: float) -> None:
-        state["elapsed"] += delta_seconds
-        if state["elapsed"] < delay_seconds:
-            return
-        handle = state["handle"]
-        if handle is not None:
-            unreal.unregister_slate_post_tick_callback(handle)
-            state["handle"] = None
-        _warm_start_ui()
-
-    state["handle"] = unreal.register_slate_post_tick_callback(_tick)
 
 
 def register() -> None:
@@ -170,16 +111,21 @@ def register() -> None:
         log.debug("Client warm-up skipped: %s", exc)
 
     try:
-        _schedule_warm_start()
+        from .core import editor_thread
+        from .ui_native import asset_bar_native, settings
+
+        editor_thread.install()
+        asset_bar_native.install()
+        settings.install()
     except Exception as exc:
-        log.debug("Warm start scheduling skipped: %s", exc)
+        log.error("Native UI initialization failed: %s. Rebuild the BlendkitViewport module.", exc)
 
     _registered = True
     log.info("Blendkit for Unreal registered.")
 
 
 def unregister() -> None:
-    """Tear down the menu and Qt pump (useful for live-reload during dev)."""
+    """Tear down menus, native bindings and editor callbacks."""
     global _registered
     try:
         import unreal
@@ -191,10 +137,13 @@ def unregister() -> None:
         log.debug("Menu unregister skipped: %s", exc)
 
     try:
-        from .core import qt_host
+        from .core import editor_thread
+        from .ui_native import asset_bar_native, settings
 
-        qt_host.shutdown()
+        settings.shutdown()
+        asset_bar_native.shutdown()
+        editor_thread.shutdown()
     except Exception:
-        pass
+        log.exception("Native UI teardown failed")
 
     _registered = False

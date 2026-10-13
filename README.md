@@ -17,13 +17,14 @@
 > **Status:** early scaffold / **pre-alpha**. This repository is a fresh port of
 > the Blendkit Blender add-on and the [Maya plugin (`bk_maya`)](../bk_maya) to
 > Unreal Engine's editor Python API. The plumbing (plugin discovery, menu,
-> Qt-in-editor host, Go-client integration, dev tooling) is in place; the asset
+> native Slate UI, Go-client integration, dev tooling) is in place; the asset
 > bar UI is intentionally minimal and grows from here. Automated releases are
 > published to [GitHub Releases](https://github.com/BlenderKit/bk_unreal/releases):
 > every merge to `main` produces a rolling **Alpha** prerelease, and `master`
-> (or the manual *Run workflow* button) produces a regular release. The zip is
-> self-contained — unzip and junction/copy the `Blendkit/` folder into your
-> project's `Plugins/` directory and restart the editor. You can still build
+> (or the manual *Run workflow* button) produces a regular release with Windows
+> x64, macOS ARM64, and Linux x64 ZIPs. Copy the `Blendkit/` folder into your
+> project's `Plugins/` directory and compile the native module for your Unreal
+> Engine version before opening the editor. You can still build
 > locally with `python dev.py build`.
 
 ## About
@@ -34,12 +35,12 @@ into the level. It reuses the same account / Full plan as the Blender add-on.
 
 It is built on:
 
-- **Unreal Engine 5.6** editor Python API (Python 3.11), `unreal.ToolMenus` for
-  menus, and a Slate post-tick pump so a **Qt** (PySide6 via `qtpy`) asset bar
-  can live inside the editor without blocking it.
+- **Unreal Engine** editor Python API (Python 3.11), `unreal.ToolMenus` for
+  menus, and native **Slate** asset-browser and settings tabs. There is no Qt,
+  PySide6, or Shiboken dependency. The C++ module is tested locally on UE 5.8.
 - The shared Go **`blendkit-client`** for search, auth, thumbnails and
   downloads (embedded as the `bk_client` git submodule).
-- Vendored `qtpy` / `requests` / `packaging` under
+- Vendored `requests` / `packaging` and their dependencies under
   [Content/Python/bk_unreal/lib](Content/Python/bk_unreal/lib) (git-ignored,
   populated by `python dev.py vendor`).
 
@@ -58,10 +59,10 @@ Content/Python/
       global_vars.py  log.py  prefs.py
       client_lib.py                    Go-client spawn / port discovery / search / report poll
       search.py                        query construction
-      qt_host.py                       QApplication + Slate tick pump
-    ui/asset_bar.py                    Qt search window (hosted in the editor)
+      editor_thread.py                 Qt-free Slate callback dispatch
+    ui_native/                         Python glue for native asset and settings tabs
     bk_proxor/                         mesh-preview submodule (.prx / .prxc), shared with bk_maya
-    lib/                               vendored qtpy/requests (git-ignored)
+    lib/                               lightweight vendored dependencies (git-ignored)
 dev.py                                 vendor / build / stamp tasks
 .vscode/unreal_plugin.py               junction + Python-path registration for live dev
 .vscode/{settings,launch,extensions}.json, pdm_setup_project.{bat,sh}
@@ -75,7 +76,7 @@ tests/                                 pure-Python tests (no Unreal/Qt needed)
 git clone --recursive https://github.com/BlenderKit/bk_unreal.git
 cd bk_unreal
 
-# 2. one-shot setup: venv + dev tools + vendor Qt + pre-commit
+# 2. one-shot setup: venv + dev tools + vendor dependencies + pre-commit
 #    (VS Code: Run and Debug ▸ "Run Project Setup", or:)
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
@@ -108,7 +109,10 @@ available as VS Code launch configs (they prompt for the `.uproject` path):
    ```
 
 Restart the editor. Unreal runs `Content/Python/init_unreal.py`, which builds the
-**Blendkit** menu. **Blendkit ▸ Open Asset Bar** opens the Qt search window.
+**Blendkit** menu. **Blendkit ▸ Open Asset Bar** opens the native asset tab;
+**Blendkit ▸ Settings** opens native settings and browser login. Both require
+the compiled `BlendkitViewport` module; Python-path registration alone does not
+provide the native UI.
 
 > During dev, re-run logic without restarting the editor with Unreal's Python
 > console:
@@ -130,7 +134,7 @@ their own):
 
 - `BK_TEST_UPROJECT` — absolute path to your test `.uproject`.
 - `BK_TEST_UPROJECT_TARGET` — the editor target name, i.e. your project name +
-  `Editor` (e.g. `c_58Editor`).
+  `Editor` (e.g. `c_59Editor`).
 
 Set them in [.env](.env) (already wired to `python.envFile`) for the Python
 tooling, **and** export them in the environment VS Code inherits so the build
@@ -162,6 +166,14 @@ python dev.py build --channel stable
 
 The zip contains the plugin under a top-level `Blendkit/` folder; drop it into
 a project's `Plugins/` directory.
+
+GitHub releases contain three platform variants with a shared version. Qt
+packages left over from older local builds are excluded automatically. The
+release workflow packages C++ source, not precompiled Unreal modules.
+
+Enable **Blendkit**, **Python Editor Script Plugin**, **Editor Scripting Utilities**,
+and **USD Importer** for model imports. Configure Blender 5.0 or newer in
+**Blendkit ▸ Settings**. Blender is external and is not included in the ZIP.
 
 ## The `bk_client` and `bk_proxor` submodules
 
