@@ -2,7 +2,7 @@
     "version": "2.0.0",
     "tasks": [
         {
-            // BK_TEST_UPROJECT_TARGET: the target name to build, e.g. "c_58Editor"
+            // BK_TEST_UPROJECT_TARGET: the target name to build, e.g. "c_59Editor"
             // (your test project's name + "Editor"). BK_TEST_UPROJECT: absolute path to
             // your local test .uproject. Both are user/system environment variables — set
             // once outside git, not tracked here.

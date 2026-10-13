@@ -12,7 +12,7 @@
 
 Commands
 --------
-    python dev.py vendor      Download pure-Python deps (qtpy, packaging,
+    python dev.py vendor      Download lightweight deps (packaging,
                               requests) into Content/Python/bk_unreal/lib.
     python dev.py build       Vendor + build the local (unsigned) client +
                               write a version stamp + zip the plugin into out/.
@@ -66,26 +66,21 @@ CHANNEL_STABLE = "stable"
 CHANNEL_ALPHA = "alpha"
 CHANNEL_DEV = "dev"
 
-VENDOR_PACKAGES = ["qtpy", "packaging", "requests"]
-
-# Unreal's embedded Python ships no Qt binding (unlike Maya), so the PySide6
-# binding for the asset-bar UI must be vendored too. These are abi3 wheels
-# (cp310+), so a single download works for UE 5.4/5.8's Python 3.11.
-QT_PACKAGES = ["PySide6-Essentials", "shiboken6"]
+VENDOR_PACKAGES = ["packaging", "requests"]
 
 
 # ── Vendoring ─────────────────────────────────────────────────────
 
 
 def vendor_packages(lib_dir: str = LIB_DIR, packages: list[str] | None = None) -> None:
-    """Download dependency wheels (incl. the PySide6 Qt binding) into *lib_dir*."""
-    packages = packages or [*VENDOR_PACKAGES, *QT_PACKAGES]
+    """Download lightweight dependency wheels into *lib_dir*."""
+    packages = packages or VENDOR_PACKAGES
     print(f"Vendoring {packages} into {lib_dir} ...")
     os.makedirs(lib_dir, exist_ok=True)
 
     with tempfile.TemporaryDirectory() as tmp:
         subprocess.run(
-            [sys.executable, "-m", "pip", "download", "--no-deps", "--only-binary=:all:", "--dest", tmp, *packages],
+            [sys.executable, "-m", "pip", "download", "--only-binary=:all:", "--dest", tmp, *packages],
             check=True,
         )
         for whl_name in sorted(os.listdir(tmp)):
@@ -97,9 +92,6 @@ def vendor_packages(lib_dir: str = LIB_DIR, packages: list[str] | None = None) -
                     if ".dist-info/" in name or name.endswith((".dist-info", "/")):
                         continue
                     target = os.path.join(lib_dir, *name.split("/"))
-                    # Skip files already vendored with the same size — avoids
-                    # overwriting binaries (e.g. PySide6 DLLs) that a running
-                    # Unreal editor has locked in memory.
                     if os.path.isfile(target) and os.path.getsize(target) == member.file_size:
                         continue
                     try:
@@ -107,8 +99,7 @@ def vendor_packages(lib_dir: str = LIB_DIR, packages: list[str] | None = None) -
                     except PermissionError as exc:
                         raise SystemExit(
                             f"error: cannot write {target}: {exc}\n"
-                            "The file is in use — close the Unreal editor (and any Python "
-                            "process using PySide6), then re-run. To force a clean re-vendor, "
+                            "The file is in use — close the Unreal editor, then re-run. To force a clean re-vendor, "
                             "delete Content/Python/bk_unreal/lib first."
                         ) from exc
             print(f"  Extracted {whl_name}")
@@ -396,6 +387,9 @@ _EXCLUDE_DIRS = {
     "tests",
     "bk_client",
     "Intermediate",
+    "PySide6",
+    "shiboken6",
+    "qtpy",
 }
 
 # Dev-only root files that must not ship in the plugin zip (linter/formatter

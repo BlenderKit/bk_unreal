@@ -8,15 +8,15 @@ easy to cross-reference.
 
 - **Keep `core/` engine-agnostic.** Modules under
   `Content/Python/bk_unreal/core/` (and `api/`) must not `import unreal` or
-  `import qtpy` at module top level, so they stay unit-testable and reusable.
-  Do Unreal/Qt imports lazily inside functions (see `qt_host.py`,
+  depend on a UI toolkit, so they stay unit-testable and reusable.
+  Do Unreal imports lazily inside functions (see `editor_thread.py`,
   `unreal_plugin.py`).
 - **Everything routes through the Go client for heavy work** (search,
   thumbnails, downloads). Do not add direct blendkit.com calls for those —
   extend `core/client_lib.py` instead. Direct REST is only for OAuth/profile in
   `api/client.py`.
 - **Never block the editor thread.** Network work runs on the client's poll
-  thread; deliver results to Qt with `QTimer.singleShot(0, ...)`.
+  thread; deliver results to Slate with `editor_thread.run_on_editor_thread`.
 - **One version source of truth:** `Content/Python/bk_unreal/_version.py`
   (`BASE_VERSION`). Everything else is generated at build time.
 

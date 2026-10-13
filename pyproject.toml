@@ -40,10 +40,6 @@ path = "Content/Python/bk_unreal/_version.py"
 
 [dependency-groups]
 dev = [
-    # qtpy is also vendored into Content/Python/bk_unreal/lib/ at build time via
-    # `python dev.py vendor`. Kept here so IDEs and the local venv type-check it.
-    "qtpy>=2.4.3",
-    "PySide6>=6.6.0",
     "bandit==1.9.4",
     "ruff==0.15.20",
     "pydoclint==0.9.1",

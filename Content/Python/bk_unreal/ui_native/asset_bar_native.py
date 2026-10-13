@@ -2,7 +2,7 @@
 
 The Slate widget (``SBlendkitAssetBar``) and the ``UBlendkitBridge`` UObject live
 in the C++ ``BlendkitViewport`` module. This module binds the bridge's delegates
-and drives them with the *same* engine-agnostic core the Qt UI uses
+and drives them with the engine-agnostic core
 (:mod:`bk_unreal.core.search`, ``client_lib``, ``placement``, ``bookmarks``):
 
     Slate ─▶ bridge delegate ─▶ (here) ─▶ core  (search / drag / bookmark)
@@ -17,17 +17,15 @@ from __future__ import annotations
 
 import logging
 import os
-import threading
 import urllib.parse
 from typing import Any
 
 from ..core import bookmarks as bk_bookmarks
-from ..core import client_lib, placement
+from ..core import client_lib, editor_thread, placement
 from ..core import search as bk_search
 
 log = logging.getLogger(__name__)
 
-# Web detail page (mirrors ui/asset_bar.py).
 _WEB_DETAIL = "https://www.blendkit.com/asset-gallery-detail/{slug}/"
 
 # Module state (all mutated on the game thread only).
@@ -38,39 +36,15 @@ _asset_type = "model"
 _search_text = ""
 _next_url = ""
 _loading = False
-
-# Game-thread dispatch queue (fed from background client callbacks).
-_queue_lock = threading.Lock()
-_queue: list = []
-_tick_handle: Any = None
-
+_active_generation = 0
 
 # ── game-thread marshaling ────────────────────────────────────────────────────
 
 
 def _run_on_game_thread(func) -> None:
     """Queue *func* to run on the next Slate post-tick (the game thread)."""
-    with _queue_lock:
-        _queue.append(func)
-
-
-def _drain(_delta: float) -> None:
-    with _queue_lock:
-        pending, _queue[:] = list(_queue), []
-    for func in pending:
-        try:
-            func()
-        except Exception:  # never let one callback kill the tick
-            log.debug("native asset bar: queued callback failed", exc_info=True)
-
-
-def _ensure_tick() -> None:
-    global _tick_handle
-    if _tick_handle is not None:
-        return
-    import unreal
-
-    _tick_handle = unreal.register_slate_post_tick_callback(_drain)
+    if _installed:
+        editor_thread.run_on_editor_thread(func)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -154,14 +128,19 @@ def _apply_page(assets: list[dict[str, Any]], next_url: str, *, replace: bool) -
 
 def _run_query(query: dict[str, Any], *, replace: bool, failed_msg: str) -> None:
     """Dispatch a search query; callbacks marshal back to the game thread."""
+    generation = _active_generation
 
     def _on_task(task: dict[str, Any]) -> None:
         # Runs on the report-poll thread — marshal before touching the bridge.
+        if generation != _active_generation:
+            return
         status = task.get("status", "")
         if status == "error":
 
             def _err() -> None:
                 global _loading
+                if generation != _active_generation:
+                    return
                 _loading = False
                 bridge = _bridge()
                 if bridge is not None:
@@ -174,11 +153,19 @@ def _run_query(query: dict[str, Any], *, replace: bool, failed_msg: str) -> None
         result = task.get("result") or {}
         assets = result.get("results") or task.get("results") or []
         next_url = result.get("next") or ""
-        _run_on_game_thread(lambda: _apply_page(assets, next_url, replace=replace))
+
+        def _apply() -> None:
+            if generation != _active_generation:
+                return
+            _apply_page(assets, next_url, replace=replace)
+
+        _run_on_game_thread(_apply)
 
     def _on_failed() -> None:
         def _fail() -> None:
             global _loading
+            if generation != _active_generation:
+                return
             _loading = False
             bridge = _bridge()
             if bridge is not None and failed_msg:
@@ -194,7 +181,8 @@ def _run_query(query: dict[str, Any], *, replace: bool, failed_msg: str) -> None
 
 def _on_search(query_text: str, asset_type: str) -> None:
     """Slate requested a search (already on the game thread)."""
-    global _asset_type, _search_text, _next_url, _loading
+    global _asset_type, _search_text, _next_url, _loading, _active_generation
+    _active_generation += 1
     _asset_type = asset_type or "model"
     _search_text = query_text or ""
     _assets.clear()
@@ -266,8 +254,8 @@ def _on_bookmark_toggled(asset_id: str) -> None:
 # ── public entry point ────────────────────────────────────────────────────────
 
 
-def open_native_asset_bar() -> None:
-    """Install the bridge bindings (once) and open/focus the native tab."""
+def install() -> None:
+    """Install native asset-bar bindings once on the editor thread."""
     global _installed, _tempdir
 
     import unreal
@@ -281,7 +269,7 @@ def open_native_asset_bar() -> None:
         import tempfile
 
         _tempdir = tempfile.mkdtemp(prefix="bk_unreal_native_")
-        _ensure_tick()
+        editor_thread.install()
         bridge.on_search_requested.add_callable(_on_search)
         bridge.on_asset_drag_started.add_callable(_on_drag)
         bridge.on_asset_activated.add_callable(_on_activated)
@@ -290,4 +278,30 @@ def open_native_asset_bar() -> None:
         client_lib.register_thumbnail_callback(_on_thumbnail)
         _installed = True
 
-    bridge.open_tab()
+
+def open_native_asset_bar() -> None:
+    """Open or focus the native asset browser."""
+    install()
+    _bridge().open_tab()
+
+
+def shutdown() -> None:
+    """Unbind native asset events and stop delivering thumbnail callbacks."""
+    global _installed, _loading, _next_url, _active_generation
+    if not _installed:
+        return
+    _installed = False
+    _active_generation += 1
+    bridge = _bridge()
+    for delegate, callback in (
+        (bridge.on_search_requested, _on_search),
+        (bridge.on_asset_drag_started, _on_drag),
+        (bridge.on_asset_activated, _on_activated),
+        (bridge.on_bookmark_toggled, _on_bookmark_toggled),
+        (bridge.on_load_more_requested, _on_load_more),
+    ):
+        delegate.remove_callable(callback)
+    client_lib.register_thumbnail_callback(None)
+    _assets.clear()
+    _loading = False
+    _next_url = ""

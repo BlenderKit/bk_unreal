@@ -190,7 +190,7 @@ class DownloadController:
 
     def _import_on_editor_thread(self, usd_path: str, usd_import: Any) -> None:
         """Queue Unreal actor creation onto the editor thread and await it."""
-        from . import qt_host
+        from . import editor_thread
 
         completed = threading.Event()
         failure: list[BaseException] = []
@@ -209,7 +209,7 @@ class DownloadController:
             finally:
                 completed.set()
 
-        qt_host.run_on_editor_thread(_import)
+        editor_thread.run_on_editor_thread(_import)
         if not completed.wait(60.0):
             raise TimeoutError("Timed out waiting for the Unreal USD stage import.")
         if failure:

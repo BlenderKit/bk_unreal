@@ -23,6 +23,17 @@ void UBlendkitBridge::OpenTab()
 	FGlobalTabmanager::Get()->TryInvokeTab(FName(TEXT("BlendkitAssetBar")));
 }
 
+void UBlendkitBridge::OpenSettingsTab()
+{
+	OnSettingsRequested.Broadcast();
+	FGlobalTabmanager::Get()->TryInvokeTab(FName(TEXT("BlendkitSettings")));
+}
+
+void UBlendkitBridge::SetSettings(const FBlendkitSettings& InSettings)
+{
+	Settings = InSettings;
+}
+
 void UBlendkitBridge::SetResults(const TArray<FBlendkitAssetItem>& InItems)
 {
 	Results = InItems;

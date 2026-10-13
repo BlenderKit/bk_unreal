@@ -5,8 +5,7 @@ needed to *configure* Blender: auto-detection, ``--version`` querying (cached in
 prefs) and a minimum-version check. Blendkit requires **Blender 5.0 or newer**.
 
 Kept engine-agnostic and Qt-free so the headless pytest suite can import it.
-The QProcess-based background job runner will be added alongside the
-download/import feature.
+The download controller runs background Blender jobs without a UI toolkit.
 
 Auto-detection order (see :func:`find_blender_executable`):
 

@@ -474,20 +474,16 @@ class DragSession:
 def start_drag(asset_data: dict[str, Any], thumb_path: str) -> None:
     """Entry point called from the asset bar's tile drag threshold.
 
-    The tile's Qt event runs on whichever thread pumps Qt: on macOS that is the
-    Cocoa main thread, which is *not* Unreal's game/Slate thread. Every
-    ``unreal`` call in :meth:`DragSession.start` (spawning the preview actor,
-    registering the Slate post-tick) asserts it is on the game thread, so the
-    session is marshaled there via the Qt host. Falls back to an inline call
-    outside the editor (headless tests).
+    Queue the session on Unreal's editor thread so preview creation and Slate
+    callbacks run on the owning thread. Headless tests can run inline.
     """
 
     def _start() -> None:
         DragSession.get().start(asset_data, thumb_path)
 
     try:
-        from . import qt_host
+        from . import editor_thread
 
-        qt_host.run_on_editor_thread(_start)
+        editor_thread.run_on_editor_thread(_start)
     except Exception:
         _start()

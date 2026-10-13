@@ -279,9 +279,10 @@ void SBlendkitAssetBar::Construct(const FArguments& InArgs)
 				})
 				.OnSelectionChanged_Lambda([this](TSharedPtr<FString> In, ESelectInfo::Type)
 				{
-					if (In.IsValid())
+					if (In.IsValid() && In != CurrentType)
 					{
 						CurrentType = In;
+						TriggerSearch();
 					}
 				})
 				[
@@ -299,6 +300,7 @@ void SBlendkitAssetBar::Construct(const FArguments& InArgs)
 				SAssignNew(SearchBox, SSearchBox)
 				.HintText(LOCTEXT("SearchHint", "Search Blendkit…"))
 				.OnTextCommitted(this, &SBlendkitAssetBar::OnSearchCommitted)
+				.OnSearch_Lambda([this](SSearchBox::SearchDirection) { TriggerSearch(); })
 			]
 		]
 		// Status line.

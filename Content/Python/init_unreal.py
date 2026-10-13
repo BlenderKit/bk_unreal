@@ -41,9 +41,6 @@ for _extra in (_PYTHON_DIR, _LIB_DIR):
     if os.path.isdir(_extra) and _extra not in sys.path:
         sys.path.insert(0, _extra)
 
-# Bind qtpy to the vendored PySide6 (the only Qt binding we ship).
-os.environ.setdefault("QT_API", "pyside6")
-
 
 def _bootstrap() -> None:
     try:

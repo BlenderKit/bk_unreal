@@ -16,8 +16,8 @@ Unreal plugin (`Blendkit.uplugin`). Reference `../bk_maya` and
 - `Content/Python/init_unreal.py` — Unreal auto-runs this at editor startup;
   it bootstraps `sys.path` and calls `bk_unreal.unreal_plugin.register()`.
 - `Content/Python/bk_unreal/` — the package: `unreal_plugin.py` (ToolMenus menu),
-  `core/` (engine-agnostic: `client_lib`, `search`, `qt_host`, `global_vars`,
-  `log`, `prefs`), `api/client.py` (REST), `ui/asset_bar.py` (Qt window).
+  `core/` (engine-agnostic: `client_lib`, `search`, `editor_thread`, `global_vars`,
+  `log`, `prefs`), `api/client.py` (REST), `ui_native/` (native Slate UI glue).
 - `bk_client/` — Go client (submodule). `Content/Python/bk_unreal/bk_proxor/` —
   mesh-preview lib (submodule). Run `git submodule update --init --recursive`.
 - `dev.py` — `vendor` / `build` / `stamp`. `.vscode/unreal_plugin.py` — live-dev
@@ -26,10 +26,10 @@ Unreal plugin (`Blendkit.uplugin`). Reference `../bk_maya` and
 ## Rules
 
 1. `from __future__ import annotations` in every module.
-2. `core/` + `api/` never import `unreal`/`qtpy` at top level (keeps tests
-   headless). Import lazily.
+2. `core/` + `api/` never import `unreal` at top level (keeps tests
+  headless). Import lazily. UI is native Slate; do not add Qt dependencies.
 3. Search/thumbnail/download → the Go client (`core/client_lib.py`), not direct
-   REST. Never block the editor thread; marshal to Qt via `QTimer.singleShot`.
+  REST. Never block the editor thread; use `editor_thread.run_on_editor_thread`.
 4. Version only in `_version.py`.
 
 ## Build & test

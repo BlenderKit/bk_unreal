@@ -16,7 +16,7 @@ This module owns:
   * port discovery,
   * the ``/blender/asset_search`` POST,
   * the ``/report`` GET poll,
-  * a task-id → callback registry used by ``ui.asset_bar`` to deliver search
+    * a task-id → callback registry used by ``ui_native.asset_bar_native`` to deliver search
     results and thumbnail paths back to the GUI thread.
 """
 
@@ -831,7 +831,7 @@ def asset_search_async(
     """Run :func:`asset_search` on a worker thread so the caller never blocks.
 
     Launching/discovering the client and the POST itself are network calls that
-    must never run on the Unreal editor (Qt GUI) thread.
+    must never run on the Unreal editor thread.
 
     Args:
         query: Search parameters, as built by :func:`bk_unreal.core.search.build_query`.

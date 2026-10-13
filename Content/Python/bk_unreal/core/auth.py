@@ -277,7 +277,7 @@ def _request_refresh(refresh: str, old_api_key: str) -> None:
                 _refresh_inflight = False
             log.warning("Token refresh request failed: %s", exc)
 
-    # Never on the caller's thread: get_api_key() runs on the Qt/editor thread.
+    # Never on the caller's thread: get_api_key() runs on the editor thread.
     threading.Thread(target=_worker, name="bk_unreal-token-refresh", daemon=True).start()
 
 
@@ -330,12 +330,16 @@ def login_async(on_done: Callable[[bool], None], timeout: float = 180.0) -> None
     """Non-blocking variant of :func:`login` for UI callers on the GUI thread.
 
     Runs :func:`login` on a daemon thread and invokes *on_done(success)*; the
-    caller is responsible for marshalling *on_done* back to the GUI thread if
-    it touches Qt widgets (e.g. via ``QTimer.singleShot(0, ...)``).
+    caller must marshal *on_done* to the editor thread before touching Unreal
+    or Slate (via ``editor_thread.run_on_editor_thread``).
     """
 
     def _worker() -> None:
-        ok = login(timeout=timeout)
+        try:
+            ok = login(timeout=timeout)
+        except Exception:
+            log.exception("Browser login failed")
+            ok = False
         try:
             on_done(ok)
         except Exception:
