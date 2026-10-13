@@ -13,7 +13,7 @@ client
 .coverage.*
 coverage.xml
 
-# vendored Qt/requests (populated by `python dev.py vendor`)
+# vendored dependencies (populated by `python dev.py vendor`)
 Content/Python/bk_unreal/lib/
 
 # generated version stamp (written by `python dev.py build`)

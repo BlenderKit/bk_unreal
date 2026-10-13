@@ -67,6 +67,7 @@ CHANNEL_ALPHA = "alpha"
 CHANNEL_DEV = "dev"
 
 VENDOR_PACKAGES = ["packaging", "requests"]
+RETIRED_VENDOR_PACKAGES = ["PySide6", "shiboken6", "qtpy"]
 
 
 # ── Vendoring ─────────────────────────────────────────────────────
@@ -77,6 +78,12 @@ def vendor_packages(lib_dir: str = LIB_DIR, packages: list[str] | None = None) -
     packages = packages or VENDOR_PACKAGES
     print(f"Vendoring {packages} into {lib_dir} ...")
     os.makedirs(lib_dir, exist_ok=True)
+
+    for retired in RETIRED_VENDOR_PACKAGES:
+        retired_path = os.path.join(lib_dir, retired)
+        if os.path.exists(retired_path):
+            shutil.rmtree(retired_path, ignore_errors=True)
+            print(f"  Removed retired dependency {retired}")
 
     with tempfile.TemporaryDirectory() as tmp:
         subprocess.run(

@@ -27,7 +27,7 @@ pdm install --group dev
 echo "Ensuring pip is available in the venv (dev.py vendor uses pip download)..."
 pdm run python -m ensurepip --upgrade
 
-echo "Vendoring Qt into the plugin..."
+echo "Vendoring dependencies into the plugin..."
 pdm run python dev.py vendor
 
 echo "Installing pre-commit hooks..."

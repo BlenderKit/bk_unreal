@@ -23,6 +23,8 @@ name: Release
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
+  pull_request:
+    branches: ['**']
   push:
     branches: [main, master]
   workflow_dispatch:
@@ -34,11 +36,11 @@ on:
         default: stable
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
+  group: release-${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   prepare:
@@ -58,6 +60,8 @@ jobs:
             CHANNEL="${{ github.event.inputs.channel }}"
           elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
             CHANNEL="alpha"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            CHANNEL="dev"
           else
             CHANNEL="stable"
           fi
@@ -131,9 +135,9 @@ jobs:
           ])
           with tempfile.TemporaryDirectory() as directory:
               with zipfile.ZipFile("out/Blendkit-${{ needs.prepare.outputs.version }}.zip") as package:
-                retired = {"PySide6", "shiboken6", "qtpy"}
-                if any(retired.intersection(name.split("/")) for name in package.namelist()):
-                  raise RuntimeError("Package contains retired Qt dependencies")
+                  retired = {"PySide6", "shiboken6", "qtpy"}
+                  if any(retired.intersection(name.split("/")) for name in package.namelist()):
+                      raise RuntimeError("Package contains retired Qt dependencies")
                   package.extractall(directory)
               python_dir = os.path.join(directory, "Blendkit", "Content", "Python")
               lib_dir = os.path.join(python_dir, "bk_unreal", "lib")
@@ -153,8 +157,11 @@ jobs:
           if-no-files-found: error
 
   release:
+    if: github.event_name != 'pull_request'
     needs: [prepare, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Download platform packages
         uses: actions/download-artifact@v4

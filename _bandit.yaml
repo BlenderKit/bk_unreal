@@ -8,7 +8,7 @@ exclude_dirs:
   - "client"
   - "_debug"
   - "tests"
-  - "Content/Python/bk_unreal/lib"        # vendored third-party (qtpy, requests, packaging)
+  - "Content/Python/bk_unreal/lib"        # vendored third-party (requests, packaging)
   - "Content/Python/bk_unreal/bk_proxor"  # git submodule — scanned in its own repo
   - "bk_client"                            # git submodule (Go client) — scanned in its own repo
 
