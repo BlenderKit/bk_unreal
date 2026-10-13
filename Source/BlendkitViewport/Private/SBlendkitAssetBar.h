@@ -24,6 +24,15 @@ struct FBlendkitTileItem
 	bool bBookmarked = false;
 	FString ThumbnailPath;
 	TSharedPtr<FSlateBrush> Brush;
+
+	FString Description;
+	FString AuthorName;
+	FString AuthorId;
+	FString License;
+	FString Price;
+	FString Rating;
+	FString DownloadCount;
+	FString Tags;
 };
 
 class SBlendkitAssetBar : public SCompoundWidget

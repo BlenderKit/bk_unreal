@@ -24,6 +24,7 @@ public class BlendkitViewport : ModuleRules
 			"Slate",
 			"SlateCore",
 			"InputCore",          // key/mouse enums for drag detection
+			"ApplicationCore",    // clipboard support
 			"ImageWrapper",       // decode downloaded thumbnails into Slate brushes
 			"WorkspaceMenuStructure", // dockable tab menu group
 			"DesktopPlatform",
