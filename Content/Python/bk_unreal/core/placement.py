@@ -290,8 +290,8 @@ class DragSession:
     def start(self, asset_data: dict[str, Any], thumb_path: str) -> None:
         global _active_state
         if _active_state.active:
-            log.debug("DragSession already active; ignoring start()")
-            return
+            log.info("Cancelling previous active drag session before starting new one.")
+            self.cancel()
 
         bbox_min, bbox_max, pivot_offset = _asset_bbox_with_pivot(asset_data)
         prxc = _load_proxor_payload(asset_data)
@@ -328,15 +328,16 @@ class DragSession:
 
     def cancel(self) -> None:
         global _active_state
-        if not _active_state.active:
-            return
         _active_state.active = False
         _active_state.downloading = False
         viewport_ue.set_wheel_capture_active(False)
-        viewport_ue.uninstall_tick(self._tick_handle)
-        self._tick_handle = None
-        viewport_ue.destroy_preview_actor(self._preview_actor)
-        self._preview_actor = None
+        if self._tick_handle is not None:
+            viewport_ue.uninstall_tick(self._tick_handle)
+            self._tick_handle = None
+        if self._preview_actor is not None:
+            viewport_ue.destroy_preview_actor(self._preview_actor)
+            self._preview_actor = None
+        viewport_ue.set_placement_realtime_active(False)
         log.info("Drag cancelled.")
 
     def _on_drop(self) -> None:
@@ -379,6 +380,9 @@ class DragSession:
             controller.start()
         except Exception as exc:  # pragma: no cover - editor-side fallback
             _active_state.download_status = "Failed"
+            _active_state.downloading = False
+            _active_state.active = False
+            self.cancel()
             log.exception("Unhandled model import pipeline start failed: %s", exc)
 
     def _on_download_progress(self, progress: float, status: str) -> None:
@@ -390,6 +394,22 @@ class DragSession:
         _active_state.download_status = status
         _active_state.downloading = False
         _active_state.active = False
+
+        def _cleanup() -> None:
+            if self._tick_handle is not None:
+                viewport_ue.uninstall_tick(self._tick_handle)
+                self._tick_handle = None
+            if self._preview_actor is not None:
+                viewport_ue.destroy_preview_actor(self._preview_actor)
+                self._preview_actor = None
+            viewport_ue.set_placement_realtime_active(False)
+
+        try:
+            from . import editor_thread
+
+            editor_thread.run_on_editor_thread(_cleanup)
+        except Exception:
+            _cleanup()
 
     # ── Proxor async fetch ───────────────────────────────────────────────
 

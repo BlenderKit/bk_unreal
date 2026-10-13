@@ -37,6 +37,8 @@ _search_text = ""
 _next_url = ""
 _loading = False
 _active_generation = 0
+_bridge_ref: Any = None
+_bound_delegates: list[tuple[Any, Any]] = []
 
 # ── game-thread marshaling ────────────────────────────────────────────────────
 
@@ -51,9 +53,16 @@ def _run_on_game_thread(func) -> None:
 
 
 def _bridge():
-    import unreal
+    global _bridge_ref
+    if _bridge_ref is not None:
+        return _bridge_ref
+    try:
+        import unreal
 
-    return unreal.BlendkitBridge.get()
+        _bridge_ref = unreal.BlendkitBridge.get()
+        return _bridge_ref
+    except Exception:
+        return None
 
 
 def _thumb_for(asset: dict[str, Any]) -> str:
@@ -256,11 +265,9 @@ def _on_bookmark_toggled(asset_id: str) -> None:
 
 def install() -> None:
     """Install native asset-bar bindings once on the editor thread."""
-    global _installed, _tempdir
+    global _installed, _tempdir, _bridge_ref, _bound_delegates
 
-    import unreal
-
-    bridge = unreal.BlendkitBridge.get()
+    bridge = _bridge()
     if bridge is None:
         log.error("Cannot open native asset bar: BlendkitBridge is unavailable.")
         return
@@ -270,11 +277,15 @@ def install() -> None:
 
         _tempdir = tempfile.mkdtemp(prefix="bk_unreal_native_")
         editor_thread.install()
-        bridge.on_search_requested.add_callable(_on_search)
-        bridge.on_asset_drag_started.add_callable(_on_drag)
-        bridge.on_asset_activated.add_callable(_on_activated)
-        bridge.on_bookmark_toggled.add_callable(_on_bookmark_toggled)
-        bridge.on_load_more_requested.add_callable(_on_load_more)
+        _bound_delegates = [
+            (bridge.on_search_requested, _on_search),
+            (bridge.on_asset_drag_started, _on_drag),
+            (bridge.on_asset_activated, _on_activated),
+            (bridge.on_bookmark_toggled, _on_bookmark_toggled),
+            (bridge.on_load_more_requested, _on_load_more),
+        ]
+        for delegate, callback in _bound_delegates:
+            delegate.add_callable(callback)
         client_lib.register_thumbnail_callback(_on_thumbnail)
         _installed = True
 
@@ -282,25 +293,28 @@ def install() -> None:
 def open_native_asset_bar() -> None:
     """Open or focus the native asset browser."""
     install()
-    _bridge().open_tab()
+    client_lib.warm_up(force=True)
+    bridge = _bridge()
+    if bridge is not None:
+        bridge.open_tab()
+    if not _assets:
+        _on_search("", _asset_type or "model")
 
 
 def shutdown() -> None:
     """Unbind native asset events and stop delivering thumbnail callbacks."""
-    global _installed, _loading, _next_url, _active_generation
+    global _installed, _loading, _next_url, _active_generation, _bridge_ref, _bound_delegates
     if not _installed:
         return
     _installed = False
     _active_generation += 1
-    bridge = _bridge()
-    for delegate, callback in (
-        (bridge.on_search_requested, _on_search),
-        (bridge.on_asset_drag_started, _on_drag),
-        (bridge.on_asset_activated, _on_activated),
-        (bridge.on_bookmark_toggled, _on_bookmark_toggled),
-        (bridge.on_load_more_requested, _on_load_more),
-    ):
-        delegate.remove_callable(callback)
+    for delegate, callback in _bound_delegates:
+        try:
+            delegate.remove_callable(callback)
+        except Exception:
+            pass
+    _bound_delegates.clear()
+    _bridge_ref = None
     client_lib.register_thumbnail_callback(None)
     _assets.clear()
     _loading = False

@@ -79,10 +79,17 @@ def build_search_url(query: dict[str, Any], next_url: str = "") -> str:
     if not search_text:  # server expects a leading separator when query is empty
         query_str = "+" + query_str
 
+    try:
+        from .. import _version
+
+        ver = _version.get_version()
+    except Exception:
+        ver = "0.1.dev"
+
     other = {
         "dict_parameters": 1,
         "page_size": page_size,
-        "addon_version": "3.20.0",
+        "addon_version": ver,
         "addon_type": "unreal",
     }
     return f"{global_vars.SERVER}/api/v1/search/?query={query_str}&{urllib.parse.urlencode(other)}"

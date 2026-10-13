@@ -1,10 +1,11 @@
 #include "BlendkitBridge.h"
 
 #include "Framework/Docking/TabManager.h"
+#include "UObject/StrongObjectPtr.h"
 
 namespace
 {
-	TWeakObjectPtr<UBlendkitBridge> GBlendkitBridge;
+	TStrongObjectPtr<UBlendkitBridge> GBlendkitBridge;
 }
 
 UBlendkitBridge* UBlendkitBridge::Get()
@@ -13,7 +14,7 @@ UBlendkitBridge* UBlendkitBridge::Get()
 	{
 		UBlendkitBridge* Bridge = NewObject<UBlendkitBridge>(GetTransientPackage(), TEXT("BlendkitBridge"));
 		Bridge->AddToRoot(); // survives GC for the editor session
-		GBlendkitBridge = Bridge;
+		GBlendkitBridge.Reset(Bridge);
 	}
 	return GBlendkitBridge.Get();
 }
@@ -57,4 +58,36 @@ void UBlendkitBridge::SetStatus(const FString& Text)
 {
 	Status = Text;
 	OnStatusChanged.Broadcast(Text);
+}
+
+void UBlendkitBridge::AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector)
+{
+	Super::AddReferencedObjects(InThis, Collector);
+	UBlendkitBridge* This = CastChecked<UBlendkitBridge>(InThis);
+
+	This->BoundCallables.Reset();
+	auto CollectDelegate = [This](const FMulticastScriptDelegate& Delegate)
+	{
+		for (UObject* Obj : Delegate.GetAllObjects())
+		{
+			if (Obj)
+			{
+				This->BoundCallables.Add(Obj);
+			}
+		}
+	};
+
+	CollectDelegate(This->OnSearchRequested);
+	CollectDelegate(This->OnAssetDragStarted);
+	CollectDelegate(This->OnAssetActivated);
+	CollectDelegate(This->OnBookmarkToggled);
+	CollectDelegate(This->OnLoadMoreRequested);
+	CollectDelegate(This->OnSettingsRequested);
+	CollectDelegate(This->OnSettingsSaved);
+	CollectDelegate(This->OnLoginRequested);
+	CollectDelegate(This->OnLogoutRequested);
+	CollectDelegate(This->OnManualKeyRequested);
+	CollectDelegate(This->OnBlenderDetectRequested);
+
+	Collector.AddReferencedObjects(This->BoundCallables, This);
 }

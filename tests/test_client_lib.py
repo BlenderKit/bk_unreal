@@ -73,3 +73,17 @@ def test_blocking_file_download_uses_download_timeout(monkeypatch, tmp_path) -> 
 
     assert client_lib.blocking_file_download("https://example.test/model.blend", str(tmp_path / "model.blend"))
     assert captured["read_timeout"] == client_lib.BLOCKING_DOWNLOAD_TIMEOUT
+
+
+def test_minimal_report_data_includes_unreal_software_name() -> None:
+    data = client_lib._minimal_report_data(api_key="test-key", use_auth=False)
+    assert data["software"] == "Unreal"
+    assert data["api_key"] == "test-key"
+    assert "app_id" in data
+    assert data["addon_version"] == client_lib.get_addon_version()
+
+
+def test_prefs_block_includes_unreal_software_name() -> None:
+    prefs = client_lib._prefs_block()
+    assert prefs["software"] == "Unreal"
+    assert prefs["addon_module_name"] == "bk_unreal"
