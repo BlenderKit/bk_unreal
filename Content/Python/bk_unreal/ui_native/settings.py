@@ -15,12 +15,21 @@ _installed = False
 _generation = 0
 _probe_id = 0
 _state: dict[str, Any] = {}
+_bridge_ref: Any = None
+_bound_delegates: list[tuple[Any, Any]] = []
 
 
 def _bridge() -> Any:
-    import unreal
+    global _bridge_ref
+    if _bridge_ref is not None:
+        return _bridge_ref
+    try:
+        import unreal
 
-    return unreal.BlendkitBridge.get()
+        _bridge_ref = unreal.BlendkitBridge.get()
+        return _bridge_ref
+    except Exception:
+        return None
 
 
 def _publish() -> None:
@@ -179,11 +188,14 @@ def _bindings(bridge: Any) -> tuple[tuple[Any, Any], ...]:
 
 def install() -> None:
     """Bind native settings events once on the editor thread."""
-    global _installed
+    global _installed, _bound_delegates
     if _installed:
         return
     bridge = _bridge()
-    for delegate, callback in _bindings(bridge):
+    if bridge is None:
+        return
+    _bound_delegates = list(_bindings(bridge))
+    for delegate, callback in _bound_delegates:
         delegate.add_callable(callback)
     _state.update(login_pending=False, blender_pending=False, blender_status="", message="")
     _installed = True
@@ -194,17 +206,24 @@ def install() -> None:
 def open_settings() -> None:
     """Open or focus the dockable native settings tab."""
     install()
-    _bridge().open_settings_tab()
+    bridge = _bridge()
+    if bridge is not None:
+        bridge.open_settings_tab()
 
 
 def shutdown() -> None:
     """Unbind settings events and ignore late background callbacks."""
-    global _installed, _generation
+    global _installed, _generation, _bridge_ref, _bound_delegates
     if not _installed:
         return
     _installed = False
     _generation += 1
     auth.remove_login_listener(_on_account_changed)
-    for delegate, callback in _bindings(_bridge()):
-        delegate.remove_callable(callback)
+    for delegate, callback in _bound_delegates:
+        try:
+            delegate.remove_callable(callback)
+        except Exception:
+            pass
+    _bound_delegates.clear()
+    _bridge_ref = None
     _state.clear()

@@ -168,12 +168,17 @@ public:
 	const FString& GetStatus() const { return Status; }
 	const FBlendkitSettings& GetSettings() const { return Settings; }
 
+	static void AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector);
+
 private:
 	UPROPERTY()
 	FBlendkitSettings Settings;
 
 	UPROPERTY()
 	TArray<FBlendkitAssetItem> Results;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UObject>> BoundCallables;
 
 	FString Status;
 };

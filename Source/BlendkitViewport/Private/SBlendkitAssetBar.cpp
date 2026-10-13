@@ -156,6 +156,10 @@ public:
 		{
 			return FReply::Handled().DetectDrag(SharedThis(this), EKeys::LeftMouseButton);
 		}
+		if (Event.GetEffectingButton() == EKeys::RightMouseButton)
+		{
+			return FReply::Handled();
+		}
 		return FReply::Unhandled();
 	}
 
@@ -216,8 +220,10 @@ public:
 					}
 				})));
 
+			FWidgetPath WidgetPath;
+			FSlateApplication::Get().GeneratePathToWidgetUnchecked(SharedThis(this), WidgetPath);
 			FSlateApplication::Get().PushMenu(
-				SharedThis(this), FWidgetPath(), Menu.MakeWidget(),
+				SharedThis(this), WidgetPath, Menu.MakeWidget(),
 				Event.GetScreenSpacePosition(),
 				FPopupTransitionEffect(FPopupTransitionEffect::ContextMenu));
 			return FReply::Handled();
@@ -300,7 +306,7 @@ void SBlendkitAssetBar::Construct(const FArguments& InArgs)
 				SAssignNew(SearchBox, SSearchBox)
 				.HintText(LOCTEXT("SearchHint", "Search Blendkit…"))
 				.OnTextCommitted(this, &SBlendkitAssetBar::OnSearchCommitted)
-				.OnSearch_Lambda([this](SSearchBox::SearchDirection) { TriggerSearch(); })
+				.OnSearchGlassClicked_Lambda([this]() { TriggerSearch(); return FReply::Handled(); })
 			]
 		]
 		// Status line.

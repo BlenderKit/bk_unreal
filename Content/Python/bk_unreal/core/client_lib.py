@@ -63,12 +63,19 @@ CLIENT_PORTS: tuple[str, ...] = (
     "1234",
 )
 
-ADDON_VERSION = "3.20.0"
-"""Plugin version (X.Y.Z) reported to the Go client, kept in step with the
-Blender add-on / Maya plugin so the client logs a consistent version string."""
 
-ADDON_BUILD = "260517"
-"""Date stamp (YYMMDD) used as the 4th version segment passed to the client."""
+def get_addon_version() -> str:
+    """Return the plugin's own version string from _version."""
+    try:
+        from .. import _version
+
+        return _version.get_version()
+    except Exception:
+        return "0.1.dev"
+
+
+ADDON_VERSION = get_addon_version()
+"""Plugin version reported to the Go client, sourced from _version.py."""
 
 SOFTWARE_NAME = "Unreal"
 
@@ -111,6 +118,8 @@ _thumbnail_paths_lock = threading.Lock()
 
 _poller_thread: threading.Thread | None = None
 _poller_stop = threading.Event()
+_failed_reports: int = 0
+_RESPAWN_AFTER_FAILURES: int = 10
 
 
 class _PrxcRegistry:
@@ -396,6 +405,22 @@ def _effective_api_key() -> str:
     return auth.get_api_key() or _prefs_mod.prefs.api_key
 
 
+def _unreal_software_info() -> tuple[str, str]:
+    """Return (engine_version, project_name) if running inside Unreal."""
+    try:
+        import unreal  # type: ignore[import-not-found]
+
+        version = str(
+            unreal.SystemLibrary.get_engine_version() if hasattr(unreal.SystemLibrary, "get_engine_version") else ""
+        )
+        project = str(
+            unreal.SystemLibrary.get_project_name() if hasattr(unreal.SystemLibrary, "get_project_name") else ""
+        )
+        return version, project
+    except Exception:
+        return "", ""
+
+
 def _minimal_report_data(api_key: str = "", *, use_auth: bool = True) -> dict[str, Any]:
     """Build the tiny payload every ``/report`` poll carries.
 
@@ -409,22 +434,33 @@ def _minimal_report_data(api_key: str = "", *, use_auth: bool = True) -> dict[st
     """
     if not api_key and use_auth:
         api_key = _effective_api_key()
-    return {
+    version, project = _unreal_software_info()
+    data: dict[str, Any] = {
         "app_id": _app_id,
         "api_key": api_key,
-        "addon_version": ADDON_VERSION,
+        "addon_version": get_addon_version(),
         "platform_version": platform.platform(),
+        "software": SOFTWARE_NAME,
     }
+    if version:
+        data["software_version"] = version
+    if project:
+        data["project_name"] = project
+    return data
 
 
 def _prefs_block() -> dict[str, Any]:
     """The ``PREFS`` block the Go client embeds in every search/download task."""
+    version, project = _unreal_software_info()
     return {
         "api_key": _effective_api_key(),
         "api_key_refresh": "",
         "api_key_timeout": 0,
         "scene_id": "",
         "app_id": _app_id,
+        "software": SOFTWARE_NAME,
+        "software_version": version,
+        "project_name": project,
         "unpack_files": False,
         "create_asset_library": False,
         "resolution": _prefs_mod.prefs.resolution,
@@ -495,7 +531,7 @@ def _spawn(port: str) -> subprocess.Popen:
         "--software",
         SOFTWARE_NAME,
         "--version",
-        f"{ADDON_VERSION}.{ADDON_BUILD}",
+        get_addon_version(),
         "--pid",
         str(os.getpid()),
     ]
@@ -521,13 +557,15 @@ def ensure_running() -> str | None:
     """
     global _process, _active_port, _port_index, _client_ready
 
-    # Fast path: a client already answered and the poller has not seen it die.
-    if _client_ready:
+    # Fast path: a client already answered, is still pingable, and the poller has not seen it die.
+    if _client_ready and _ping(_active_port):
         return _active_port
 
     with _state_lock:
-        if _client_ready:
+        if _client_ready and _ping(_active_port):
             return _active_port
+
+        _client_ready = False
 
         running = _find_running_client()
         if running is not None:
@@ -536,8 +574,13 @@ def ensure_running() -> str | None:
             _start_poller()
             return running
 
-        if _client_process_alive():
+        if _client_process_alive() and _ping(_active_port):
+            _client_ready = True
+            _start_poller()
             return _active_port
+
+        if _process is not None and not _client_process_alive():
+            _process = None
 
         for _ in range(len(CLIENT_PORTS)):
             port = CLIENT_PORTS[_port_index % len(CLIENT_PORTS)]
@@ -714,10 +757,33 @@ def _drain_report(report: list[dict[str, Any]]) -> None:
                 _task_callbacks.pop(task_id, None)
 
 
-def _poll_loop() -> None:
-    global _client_ready
+def _try_respawn() -> None:
+    """Restart the client after repeated /report failures.
 
-    failures = 0
+    Mirrors Blender's and bk_maya's ``handle_failed_reports`` recovery path.
+    """
+    global _process, _client_ready
+    log.warning(
+        "Client unresponsive after %d polls; attempting respawn.",
+        _RESPAWN_AFTER_FAILURES,
+    )
+    _client_ready = False
+    with _state_lock:
+        if _process is not None:
+            try:
+                _process.terminate()
+            except Exception:
+                pass
+            _process = None
+    try:
+        ensure_running()
+    except Exception as exc:
+        log.error("Respawn failed: %s", exc)
+
+
+def _poll_loop() -> None:
+    global _client_ready, _failed_reports
+
     while not _poller_stop.is_set():
         try:
             report = _http_request(
@@ -727,15 +793,18 @@ def _poll_loop() -> None:
                 connect_timeout=POLL_CONNECT_TIMEOUT,
                 read_timeout=REQUEST_TIMEOUT,
             )
-            failures = 0
+            _failed_reports = 0
             _client_ready = True
             if isinstance(report, list):
                 _drain_report(report)
-        except Exception:
-            failures += 1
-            # Tolerate a couple of dropped polls before forcing a re-discovery.
-            if failures >= 3:
+        except Exception as exc:
+            _failed_reports += 1
+            log.debug("Report poll failed (%d): %s", _failed_reports, exc)
+            if _failed_reports >= 3:
                 _client_ready = False
+            if _failed_reports >= _RESPAWN_AFTER_FAILURES:
+                _failed_reports = 0
+                _try_respawn()
         _poller_stop.wait(0.5)
 
 
@@ -748,15 +817,15 @@ def _start_poller() -> None:
     _poller_thread.start()
 
 
-def warm_up() -> None:
-    """Locate/launch the client on a background thread (call at plugin start).
+def warm_up(force: bool = False) -> None:
+    """Locate/launch the client on a background thread (call at plugin start or tab open).
 
-    Doing this eagerly means the first search does not pay the port-discovery
-    and process-spawn latency on the user's click.
+    Doing this eagerly means opening the asset bar or searching does not pay
+    the port-discovery and process-spawn latency on user interaction.
     """
     global _warm_up_started
     with _state_lock:
-        if _warm_up_started:
+        if _warm_up_started and not force and _client_ready and _ping(_active_port):
             return
         _warm_up_started = True
 
@@ -788,7 +857,7 @@ def asset_search(query: dict[str, Any], tempdir: str, callback: Callable[[dict[s
 
     body = {
         "PREFS": _prefs_block(),
-        "addon_version": ADDON_VERSION,
+        "addon_version": get_addon_version(),
         "platform_version": platform.platform(),
         "api_key": _effective_api_key(),
         "app_id": _app_id,
@@ -874,7 +943,7 @@ def asset_prxc_download(
 
     body = {
         "PREFS": _prefs_block(),
-        "addon_version": ADDON_VERSION,
+        "addon_version": get_addon_version(),
         "platform_version": platform.platform(),
         "api_key": _effective_api_key(),
         "app_id": _app_id,
@@ -926,7 +995,7 @@ def get_download_url(asset_data: dict[str, Any], resolution: str, *, api_key: st
     prefs_block["scene_id"] = scene_uuid
     prefs_block["resolution"] = str(resolution or _prefs_mod.prefs.resolution)
     body = {
-        "addon_version": ADDON_VERSION,
+        "addon_version": get_addon_version(),
         "platform_version": platform.platform(),
         "app_id": _app_id,
         "resolution": str(resolution or _prefs_mod.prefs.resolution),
@@ -993,7 +1062,7 @@ def run_blender_script(
         "blend_path": blend_path,
         "output_path": output_path,
         "app_id": _app_id,
-        "addon_version": ADDON_VERSION,
+        "addon_version": get_addon_version(),
         "platform_version": platform.platform(),
         "software": SOFTWARE_NAME,
         "params": recipe_params,
