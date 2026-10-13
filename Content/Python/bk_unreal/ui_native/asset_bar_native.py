@@ -36,6 +36,7 @@ _asset_type = "model"
 _search_text = ""
 _next_url = ""
 _loading = False
+_active_generation = 0
 
 # ── game-thread marshaling ────────────────────────────────────────────────────
 
@@ -127,14 +128,19 @@ def _apply_page(assets: list[dict[str, Any]], next_url: str, *, replace: bool) -
 
 def _run_query(query: dict[str, Any], *, replace: bool, failed_msg: str) -> None:
     """Dispatch a search query; callbacks marshal back to the game thread."""
+    generation = _active_generation
 
     def _on_task(task: dict[str, Any]) -> None:
         # Runs on the report-poll thread — marshal before touching the bridge.
+        if generation != _active_generation:
+            return
         status = task.get("status", "")
         if status == "error":
 
             def _err() -> None:
                 global _loading
+                if generation != _active_generation:
+                    return
                 _loading = False
                 bridge = _bridge()
                 if bridge is not None:
@@ -147,11 +153,19 @@ def _run_query(query: dict[str, Any], *, replace: bool, failed_msg: str) -> None
         result = task.get("result") or {}
         assets = result.get("results") or task.get("results") or []
         next_url = result.get("next") or ""
-        _run_on_game_thread(lambda: _apply_page(assets, next_url, replace=replace))
+
+        def _apply() -> None:
+            if generation != _active_generation:
+                return
+            _apply_page(assets, next_url, replace=replace)
+
+        _run_on_game_thread(_apply)
 
     def _on_failed() -> None:
         def _fail() -> None:
             global _loading
+            if generation != _active_generation:
+                return
             _loading = False
             bridge = _bridge()
             if bridge is not None and failed_msg:
@@ -167,7 +181,8 @@ def _run_query(query: dict[str, Any], *, replace: bool, failed_msg: str) -> None
 
 def _on_search(query_text: str, asset_type: str) -> None:
     """Slate requested a search (already on the game thread)."""
-    global _asset_type, _search_text, _next_url, _loading
+    global _asset_type, _search_text, _next_url, _loading, _active_generation
+    _active_generation += 1
     _asset_type = asset_type or "model"
     _search_text = query_text or ""
     _assets.clear()
@@ -272,10 +287,11 @@ def open_native_asset_bar() -> None:
 
 def shutdown() -> None:
     """Unbind native asset events and stop delivering thumbnail callbacks."""
-    global _installed, _loading, _next_url
+    global _installed, _loading, _next_url, _active_generation
     if not _installed:
         return
     _installed = False
+    _active_generation += 1
     bridge = _bridge()
     for delegate, callback in (
         (bridge.on_search_requested, _on_search),
