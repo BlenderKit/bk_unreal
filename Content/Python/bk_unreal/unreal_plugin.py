@@ -41,6 +41,16 @@ def _open_settings_impl() -> None:
     settings.open_settings()
 
 
+def _open_report_impl() -> None:
+    """Open the bug report / feature request window."""
+    try:
+        from .ui_native import report
+    except Exception as exc:
+        log.error("Failed to import report UI: %s", exc)
+        return
+    report.open_report_window()
+
+
 def _register_menu() -> None:
     import unreal
 
@@ -86,6 +96,22 @@ def _register_menu() -> None:
         "from bk_unreal import unreal_plugin as _p; _p._open_settings_impl()",
     )
     bk_menu.add_menu_entry("Actions", settings_entry)
+
+    bk_menu.add_section("Help", "Help")
+    report_entry = unreal.ToolMenuEntry(
+        name="Blendkit.ReportProblem",
+        type=unreal.MultiBlockType.MENU_ENTRY,
+    )
+    report_entry.set_label("Report a Bug / Request a Feature...")
+    report_entry.set_tool_tip(
+        "Open a GitHub issue prefilled with Blendkit and Unreal versions, operating system and other details"
+    )
+    report_entry.set_string_command(
+        unreal.ToolMenuStringCommandType.PYTHON,
+        "",
+        "from bk_unreal import unreal_plugin as _p; _p._open_report_impl()",
+    )
+    bk_menu.add_menu_entry("Help", report_entry)
     menus.refresh_all_widgets()
 
 

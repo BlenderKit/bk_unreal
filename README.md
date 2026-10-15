@@ -60,7 +60,8 @@ Content/Python/
       client_lib.py                    Go-client spawn / port discovery / search / report poll
       search.py                        query construction
       editor_thread.py                 Qt-free Slate callback dispatch
-    ui_native/                         Python glue for native asset and settings tabs
+      report.py                        bug-report environment info + prefilled GitHub issue URLs
+    ui_native/                         Python glue for native asset, settings and report windows
     bk_proxor/                         mesh-preview submodule (.prx / .prxc), shared with bk_maya
     lib/                               lightweight vendored dependencies (git-ignored)
 dev.py                                 vendor / build / stamp tasks
@@ -112,7 +113,10 @@ Restart the editor. Unreal runs `Content/Python/init_unreal.py`, which builds th
 **Blendkit** menu. **Blendkit ▸ Open Asset Bar** opens the native asset tab;
 **Blendkit ▸ Settings** opens native settings and browser login. Both require
 the compiled `BlendkitViewport` module; Python-path registration alone does not
-provide the native UI.
+provide the native UI. **Blendkit ▸ Report a Bug / Request a Feature...** shows
+the plugin/Unreal/OS versions and opens a prefilled GitHub issue
+(`.github/ISSUE_TEMPLATE/report-prefilled.yaml`); without the native module it
+opens the prefilled issue directly in the browser.
 
 > During dev, re-run logic without restarting the editor with Unreal's Python
 > console:

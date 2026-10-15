@@ -1,0 +1,67 @@
+name: Bug Report
+description: Report a bug, crash, or other issue
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        *Please make the title as descriptive as possible, including part of the error message if applicable. This helps other users find and relate to your issue more easily.*
+
+        **Tip:** In Unreal Editor use **Blendkit ▸ Report a Bug / Request a Feature...** — it opens this form with your versions and OS already filled in.
+
+        #### Before reporting a bug, please ensure the following:
+        - You have installed the [latest version of Blendkit for Unreal](https://github.com/BlenderKit/bk_unreal/releases/latest), as the latest release may include a fix for your issue.
+        - You have restarted Unreal Editor after updating the plugin.
+        - You have searched for similar issues in the [Blendkit for Unreal issues](https://github.com/BlenderKit/bk_unreal/issues). Existing threads may offer workarounds or solutions.
+
+        #### Quick help:
+        1. Delete the `Blendkit` folder from your project's `Plugins` folder.
+        2. Extract the [latest release ZIP](https://github.com/BlenderKit/bk_unreal/releases/latest) and copy the `Blendkit` folder into `Plugins`.
+        3. Restart Unreal Editor and let it rebuild the plugin.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: |
+        Please describe the problem, the expected behavior, and any deviation from it. Including a screenshot is helpful, providing environment information is more beneficial, and adding a complete log is most advantageous (see below).
+      value: |
+        When I...
+
+        ### Environment Information - Bug happens on:
+        - Blendkit for Unreal version: v0.y.z
+        - Unreal Engine version and source (Epic Games Launcher, source build, ...): 5.X.Y (from: )
+        - Operating system & architecture: Win10/Win11 (x86_64/ARM64), MacOS (Intel/Apple Silicon), Linux distro (x86_64/ARM64)
+        - Blender version (if used for import):
+        - Using VPN, proxy, or firewall? (Yes/No/Not sure, please describe if applicable):
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error Logs
+      description: |
+        Attach or paste the relevant logs: `<Project>/Saved/Logs/<Project>.log` (Unreal Output Log) and the Blendkit client `default.log` (in `~/blenderkit_data/client`).
+        Providing error logs enables us to diagnose and address the issue more efficiently.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: |
+        Please outline the steps you took that led to the bug. If you're unsure of the exact steps, describe what you were doing when the bug occurred.
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to report this bug! Your input helps us improve Blendkit for Unreal.

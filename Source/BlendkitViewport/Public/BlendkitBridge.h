@@ -104,6 +104,31 @@ struct FBlendkitSettings
 	FString Message;
 };
 
+USTRUCT(BlueprintType)
+struct FBlendkitReportInfo
+{
+	GENERATED_BODY()
+
+	/** Markdown list of versions/OS shown in the window and copied to the clipboard. */
+	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
+	FString EnvironmentText;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
+	FString BugReportUrl;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
+	FString FeatureRequestUrl;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
+	FString IssuesUrl;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
+	FString UnrealLogDir;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
+	FString ClientLogDir;
+};
+
 // Slate -> Python.
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBlendkitSearchRequested, const FString&, Query, const FString&, AssetType);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBlendkitAssetAction, const FString&, AssetId);
@@ -135,6 +160,10 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Blendkit")
 	void SetSettings(const FBlendkitSettings& InSettings);
+
+	/** Open (or focus) the bug report / feature request window with fresh environment info. */
+	UFUNCTION(BlueprintCallable, Category = "Blendkit")
+	void OpenReportWindow(const FBlendkitReportInfo& InInfo);
 
 	/** Replace the current result set (called from Python after a search). */
 	UFUNCTION(BlueprintCallable, Category = "Blendkit")
@@ -191,12 +220,16 @@ public:
 	const TArray<FBlendkitAssetItem>& GetResults() const { return Results; }
 	const FString& GetStatus() const { return Status; }
 	const FBlendkitSettings& GetSettings() const { return Settings; }
+	const FBlendkitReportInfo& GetReportInfo() const { return ReportInfo; }
 
 	static void AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector);
 
 private:
 	UPROPERTY()
 	FBlendkitSettings Settings;
+
+	UPROPERTY()
+	FBlendkitReportInfo ReportInfo;
 
 	UPROPERTY()
 	TArray<FBlendkitAssetItem> Results;
