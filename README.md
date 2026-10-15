@@ -125,6 +125,26 @@ opens the prefilled issue directly in the browser.
 > p.unregister(); importlib.reload(p); p.register()
 > ```
 
+Placement traces use native Unreal collision queries with explicit Python
+outputs, avoiding opaque `HitResult` structs. A blocking hit supplies the
+surface position and normal; a miss falls back to the Z=0 ground plane.
+The preview and imported asset align their local up axis to the hit normal.
+Mouse-wheel rotation spins around that normal, and pivot correction keeps the
+asset's bottom-center at the hit point, including on slopes and walls.
+Targets without query collision are not picked by this path.
+Changes to the native trace signature require rebuilding `BlendkitViewport`
+and restarting Unreal; reloading Python alone cannot update the native binding.
+After editing the placement backend, reload its modules in the Unreal Python
+console when no drag is active:
+
+```python
+import importlib
+from bk_unreal.core import placement_transform, usd_import, viewport_ue
+importlib.reload(placement_transform)
+importlib.reload(viewport_ue)
+importlib.reload(usd_import)
+```
+
 To undo: `python .vscode/unreal_plugin.py remove --project "..."` (or
 `unpythonpath`).
 

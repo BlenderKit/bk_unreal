@@ -30,6 +30,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Blendkit|Viewport")
 	static void GetMouseWorldRay(bool& bValid, FVector& RayStart, FVector& RayEnd);
 
+	/** Trace the active editor world against common placeable object types.
+	 * Returns explicit out values because FHitResult is opaque in Unreal Python. */
+	UFUNCTION(BlueprintCallable, Category = "Blendkit|Viewport")
+	static void TracePlacementRay(const FVector& RayStart, const FVector& RayEnd, bool& bHit, FVector& HitLocation, FVector& HitNormal);
+
 	/** Fills bValid + OutUnitsPerPixel with how many world (cm) units one
 	 * screen pixel covers at WorldLocation, in the viewport currently under
 	 * the mouse cursor. Multiply a desired pixel width by this to get a
