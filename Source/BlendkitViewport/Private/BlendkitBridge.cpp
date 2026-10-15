@@ -1,5 +1,7 @@
 #include "BlendkitBridge.h"
 
+#include "SBlendkitReportWindow.h"
+
 #include "Framework/Docking/TabManager.h"
 #include "UObject/StrongObjectPtr.h"
 
@@ -33,6 +35,12 @@ void UBlendkitBridge::OpenSettingsTab()
 void UBlendkitBridge::SetSettings(const FBlendkitSettings& InSettings)
 {
 	Settings = InSettings;
+}
+
+void UBlendkitBridge::OpenReportWindow(const FBlendkitReportInfo& InInfo)
+{
+	ReportInfo = InInfo;
+	SBlendkitReportWindow::Open();
 }
 
 void UBlendkitBridge::SetResults(const TArray<FBlendkitAssetItem>& InItems)

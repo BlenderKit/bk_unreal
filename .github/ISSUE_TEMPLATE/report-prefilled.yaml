@@ -1,0 +1,107 @@
+name: Prefilled report from plugin
+description: Report a bug, crash, or other issue, prefilled with environment info from the Unreal plugin (Blendkit ▸ Report a Bug).
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        *Please make the title as descriptive as possible, including part of the error message if applicable. This helps other users find and relate to your issue more easily.*
+
+        #### Before reporting a bug, please ensure the following:
+        - You have installed the [latest version of Blendkit for Unreal](https://github.com/BlenderKit/bk_unreal/releases/latest), as the latest release may include a fix for your issue.
+        - You have restarted Unreal Editor after updating the plugin.
+        - You have searched for similar issues in the [Blendkit for Unreal issues](https://github.com/BlenderKit/bk_unreal/issues). Existing threads may offer workarounds or solutions.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: |
+        Please describe the problem, the expected behavior, and any deviation from it. The development team needs to understand and reproduce the problem from your description in order to fix it. Screenshots are welcome.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Outline the steps that led to the bug. If unsure, describe what you were doing when it happened (searching, downloading, dragging an asset into the level, ...).
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error Logs
+      description: |
+        Attach or paste the relevant logs. Use **Blendkit ▸ Report a Bug / Request a Feature... ▸ Open Unreal Logs** (`<Project>/Saved/Logs/<Project>.log`) and **Open Client Logs** (`default.log`).
+        Providing error logs enables us to diagnose and address the issue more efficiently.
+      render: shell
+    validations:
+      required: false
+
+  - type: input
+    id: blendkit_version
+    attributes:
+      label: Blendkit for Unreal version
+      description: Edit > Plugins > Blendkit, or the first Blendkit line in the Output Log
+    validations:
+      required: true
+
+  - type: input
+    id: unreal_version
+    attributes:
+      label: Unreal Engine version
+      description: Help > About Unreal Editor
+    validations:
+      required: true
+
+  - type: input
+    id: operating_system
+    attributes:
+      label: Operating system
+      description: Your operating system and CPU architecture (x86_64 / ARM64).
+    validations:
+      required: true
+
+  - type: input
+    id: python_version
+    attributes:
+      label: Python version
+      description: Version of the Python bundled with Unreal Editor
+    validations:
+      required: false
+
+  ### ADVANCED INFO
+
+  - type: input
+    id: client_version
+    attributes:
+      label: Blendkit client version
+    validations:
+      required: false
+
+  - type: input
+    id: blender_version
+    attributes:
+      label: Blender version
+      description: Blender configured in Blendkit ▸ Settings (used for some imports)
+    validations:
+      required: false
+
+  - type: input
+    id: ssl_verification
+    attributes:
+      label: SSL verification
+      description: Blendkit ▸ Settings ▸ Verify SSL
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to report this bug! Your input helps us improve Blendkit for Unreal.
