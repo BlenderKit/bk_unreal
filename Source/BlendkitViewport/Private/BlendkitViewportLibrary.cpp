@@ -4,6 +4,7 @@
 #include "EditorViewportClient.h"
 #include "Engine/Engine.h"
 #include "Engine/Canvas.h"
+#include "Engine/World.h"
 #include "CanvasItem.h"
 #include "Application/ThrottleManager.h"
 #include "Debug/DebugDrawService.h"
@@ -11,6 +12,7 @@
 #include "SceneView.h"
 #include "UnrealClient.h"
 #include "DrawDebugHelpers.h"
+#include "CollisionQueryParams.h"
 
 namespace
 {
@@ -132,6 +134,33 @@ void UBlendkitViewportLibrary::GetMouseWorldRay(bool& bValid, FVector& RayStart,
 	RayStart = Origin;
 	RayEnd = Origin + Direction * 1000000.0; // 10 km, comfortably past any level
 	bValid = true;
+}
+
+void UBlendkitViewportLibrary::TracePlacementRay(const FVector& RayStart, const FVector& RayEnd, bool& bHit, FVector& HitLocation, FVector& HitNormal)
+{
+	bHit = false;
+	HitLocation = FVector::ZeroVector;
+	HitNormal = FVector::UpVector;
+	FHitResult Hit;
+	if (GEditor == nullptr)
+	{
+		return;
+	}
+
+	UWorld* World = GEditor->GetEditorWorldContext().World();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	const FCollisionObjectQueryParams ObjectTypes(FCollisionObjectQueryParams::AllObjects);
+	const FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(BlendkitPlacement), true);
+	bHit = World->LineTraceSingleByObjectType(Hit, RayStart, RayEnd, ObjectTypes, QueryParams);
+	if (bHit)
+	{
+		HitLocation = Hit.ImpactPoint;
+		HitNormal = Hit.ImpactNormal;
+	}
 }
 
 void UBlendkitViewportLibrary::GetWorldUnitsPerPixel(bool& bValid, const FVector& WorldLocation, float& OutUnitsPerPixel)

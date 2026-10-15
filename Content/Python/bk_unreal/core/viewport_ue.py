@@ -45,7 +45,9 @@ import logging
 import math
 import sys
 from collections.abc import Callable
-from typing import Any
+from typing import Any, NamedTuple
+
+from .placement_transform import Basis, rotate_vector, surface_basis
 
 log = logging.getLogger(__name__)
 
@@ -530,62 +532,22 @@ def get_mouse_world_ray() -> tuple[Any, Any] | None:
 _warned_line_trace = False
 
 
-def _line_trace(unreal_mod: Any, world: Any, ray_start: Any, ray_end: Any) -> Any:
-    """Return a hit ``HitResult``, or ``None`` on miss/failure.
+class _SurfaceHit(NamedTuple):
+    location: Any
+    impact_normal: Any
 
-    Uses an *object-type* query (``WorldStatic`` + ``WorldDynamic``) rather
-    than a single trace channel: a channel-based trace only blocks on
-    whichever collision *response* a given actor happens to have configured
-    for that specific channel (often "Visibility"), which many placed/
-    imported meshes leave at "Ignore", making the drag raycast silently miss
-    everything and fall through to the floor plane. Object-type queries
-    instead match on the actor's *object type*, which defaults to
-    ``WorldStatic``/``WorldDynamic`` for nearly all placed geometry and is
-    what bk_maya's "hit any visible mesh" raycast effectively mirrors.
-    ``trace_complex=True`` gets the exact per-triangle hit/normal instead of
-    a simplified collision hull, matching bk_maya's ``closestIntersection``.
 
-    ``unreal.SystemLibrary.line_trace_single_for_objects`` is documented as
-    returning ``(bool, HitResult)``, but some engine builds bind it
-    differently (a bare ``HitResult`` with ``b_blocking_hit``, or ``None``
-    outright on failure) - handle all three shapes defensively so a binding
-    mismatch degrades to the floor-plane fallback instead of spamming a
-    debug log every tick.
-    """
+def _line_trace(unreal_mod: Any, world: Any, ray_start: Any, ray_end: Any) -> _SurfaceHit | None:
+    """Trace through native out parameters instead of opaque Python HitResult structs."""
     global _warned_line_trace
     try:
-        object_type_query = unreal_mod.ObjectTypeQuery
-        object_types = [
-            getattr(object_type_query, "ECC_WORLD_STATIC", object_type_query.OBJECT_TYPE_QUERY1),
-            getattr(object_type_query, "ECC_WORLD_DYNAMIC", object_type_query.OBJECT_TYPE_QUERY2),
-        ]
-        result = unreal_mod.SystemLibrary.line_trace_single_for_objects(
-            world,
-            ray_start,
-            ray_end,
-            object_types,
-            True,
-            [],
-            unreal_mod.DrawDebugTrace.NONE,
-            True,
-        )
+        blocking, point, normal = unreal_mod.BlendkitViewportLibrary.trace_placement_ray(ray_start, ray_end)
+        return _SurfaceHit(point, normal) if blocking else None
     except Exception as exc:
         if not _warned_line_trace:
-            log.warning("line_trace_single_for_objects raised (falling back to floor plane): %s", exc)
+            log.warning("Native placement trace failed; rebuild BlendkitViewport and restart Unreal: %s", exc)
             _warned_line_trace = True
         return None
-
-    if isinstance(result, tuple) and len(result) == 2:
-        success, hit = result
-        return hit if success else None
-    if hasattr(result, "b_blocking_hit"):
-        return result if result.b_blocking_hit else None
-    if hasattr(result, "location") and (hasattr(result, "impact_normal") or hasattr(result, "normal")):
-        return result
-    if result is not None and not _warned_line_trace:
-        log.warning("line_trace_single returned an unexpected type: %r", type(result))
-        _warned_line_trace = True
-    return None
 
 
 def raycast(ray_start: Any, ray_end: Any) -> tuple[bool, tuple[float, float, float], tuple[float, float, float], bool]:
@@ -599,7 +561,7 @@ def raycast(ray_start: Any, ray_end: Any) -> tuple[bool, tuple[float, float, flo
         hit = _line_trace(unreal_mod, world, ray_start, ray_end)
         if hit is not None:
             loc = hit.location
-            nrm = getattr(hit, "impact_normal", None) or hit.normal
+            nrm = hit.impact_normal
             normal = (nrm.x, nrm.y, nrm.z)
             # Flip a back-face normal toward the camera so a placed asset
             # never ends up aligned upside-down/inverted (mirrors bk_maya).
@@ -646,7 +608,7 @@ _BOX_EDGES = (
     (2, 6), (3, 7), (4, 5), (4, 6), (5, 7), (6, 7),
 )  # fmt: skip
 
-_Transform = tuple[tuple[float, float, float], float]
+_Transform = tuple[tuple[float, float, float], Basis]
 
 
 def _local_to_world(pt: tuple, loc: tuple, rot_z_deg: float) -> tuple[float, float, float]:
@@ -658,8 +620,9 @@ def _local_to_world(pt: tuple, loc: tuple, rot_z_deg: float) -> tuple[float, flo
 
 
 def _transform_point(pt: tuple, transform: _Transform) -> tuple[float, float, float]:
-    loc, rotation_z = transform
-    return _local_to_world(pt, loc, rotation_z)
+    loc, basis = transform
+    x, y, z = rotate_vector(pt, basis)
+    return loc[0] + x, loc[1] + y, loc[2] + z
 
 
 _warned_no_units_per_pixel = False
@@ -720,7 +683,7 @@ def update_preview_actor(_actor: Any, state: Any) -> None:
     box_thickness = max(_MIN_WORLD_THICKNESS, _BOX_THICKNESS_PX * upp)
     proxor_thickness = max(_MIN_WORLD_THICKNESS, _PROXOR_LINE_THICKNESS_PX * upp)
     rotation_z = float(state.rotation_z)
-    transform = (state.location, rotation_z)
+    transform = (state.location, surface_basis(state.surface_normal, rotation_z))
 
     corners = [_transform_point(p, transform) for p in _bbox_corners(state.bbox_min, state.bbox_max)]
     for a, b in _BOX_EDGES:

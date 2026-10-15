@@ -7,9 +7,10 @@ suite. The USD Importer plugin must be enabled in the target project.
 from __future__ import annotations
 
 import logging
-import math
 import os
 from typing import Any
+
+from .placement_transform import rotate_vector, surface_basis
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +35,8 @@ def _pivot_corrected_location(
     location: tuple[float, float, float],
     pivot_offset: tuple[float, float, float],
     rotation_z_deg: float,
+    normal: tuple[float, float, float] = (0.0, 0.0, 1.0),
+    scale: float = 1.0,
 ) -> tuple[float, float, float]:
     """Translate so the asset's bottom-center pivot (not its raw origin) lands on *location*.
 
@@ -41,16 +44,13 @@ def _pivot_corrected_location(
     usually not bottom-center. ``pivot_offset`` is the same value computed by
     ``placement._recenter_bottom_center`` for this asset's bbox: how far the
     model's own origin sits from the bottom-center pivot the drag preview
-    showed. Placing the actor's origin at ``location - R_z(pivot_offset)``
+    showed. Placing the actor's origin at ``location - R(pivot_offset)``
     makes the bottom-center point - not the raw origin - land on the drop
-    point, matching the green preview box.
+    point, matching the green preview box. Apply the same surface alignment
+    and uniform scale as the actor.
     """
-    rad = math.radians(rotation_z_deg)
-    cos_r, sin_r = math.cos(rad), math.sin(rad)
-    ox, oy, oz = pivot_offset
-    rx = -ox * cos_r + oy * sin_r
-    ry = -ox * sin_r - oy * cos_r
-    return (location[0] + rx, location[1] + ry, location[2] - oz)
+    rx, ry, rz = rotate_vector(pivot_offset, surface_basis(normal, rotation_z_deg))
+    return (location[0] - scale * rx, location[1] - scale * ry, location[2] - scale * rz)
 
 
 def import_stage(
@@ -77,10 +77,8 @@ def import_stage(
         raise RuntimeError("USD Importer plugin is not enabled: unreal.UsdStageActor is unavailable.")
 
     actor_yaw = float(rotation_z) + _USD_BASIS_YAW_DEG
-    # Pivot offset must rotate by the SAME total yaw the actor actually ends
-    # up with (including the 180 deg basis correction), or the bottom-center
-    # pivot lands off the drop point for any non-square bbox.
-    actor_location = _pivot_corrected_location(location, pivot_offset, actor_yaw)
+    # Pivot correction includes the same surface tilt and USD basis yaw as the actor.
+    actor_location = _pivot_corrected_location(location, pivot_offset, actor_yaw, normal, scale)
     # unreal.Rotator's constructor is (roll, pitch, yaw), NOT (pitch, yaw,
     # roll) - always pass by keyword here to avoid silently rotating the
     # wrong axis (this exact positional mix-up previously sent the live
@@ -90,6 +88,9 @@ def import_stage(
         pitch=_USD_BASIS_PITCH_DEG,
         yaw=actor_yaw,
     )
+    basis = surface_basis(normal, actor_yaw)
+    if basis[2] != (0.0, 0.0, 1.0):
+        rotator = unreal.MathLibrary.make_rot_from_xz(unreal.Vector(*basis[0]), unreal.Vector(*basis[2]))
     actor = unreal.EditorLevelLibrary.spawn_actor_from_class(
         actor_class,
         unreal.Vector(*actor_location),
