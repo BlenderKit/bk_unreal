@@ -964,7 +964,7 @@ def get_download_url(asset_data: dict[str, Any], resolution: str, *, api_key: st
 
     The client wrapper returns a dict with keys ``can_download``,
     ``download_url`` and ``filename``. This is the direct URL needed before the
-    actual file is pulled into the model cache.
+    actual file is pulled into the asset cache.
     """
     port = ensure_running()
     if port is None:
@@ -988,6 +988,14 @@ def get_download_url(asset_data: dict[str, Any], resolution: str, *, api_key: st
             f"Asset {asset_data.get('name') or asset_data.get('assetBaseId') or asset_data.get('id') or '?'} "
             "has no downloadable files in its search result."
         )
+    resolution = str(resolution or _prefs_mod.prefs.resolution)
+    resolution = {
+        "512": "resolution_0_5K",
+        "1024": "resolution_1K",
+        "2048": "resolution_2K",
+        "4096": "resolution_4K",
+        "8192": "resolution_8K",
+    }.get(resolution, resolution)
     effective_api_key = api_key or _effective_api_key()
     scene_uuid = str(asset_data.get("sceneUuid") or asset_data.get("scene_uuid") or uuid.uuid4())
     prefs_block = _prefs_block()

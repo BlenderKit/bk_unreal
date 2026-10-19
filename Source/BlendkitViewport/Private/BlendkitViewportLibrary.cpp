@@ -13,6 +13,13 @@
 #include "UnrealClient.h"
 #include "DrawDebugHelpers.h"
 #include "CollisionQueryParams.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "EditorFramework/AssetImportData.h"
+#include "Engine/TextureCube.h"
+#include "ImageCore.h"
+#include "ImageUtils.h"
+#include "Misc/PackageName.h"
+#include "UObject/Package.h"
 
 namespace
 {
@@ -278,4 +285,42 @@ void UBlendkitViewportLibrary::SetPlacementRealtimeOverride(bool bEnabled)
 float UBlendkitViewportLibrary::GetLastRenderDelta()
 {
 	return GLastRenderDelta;
+}
+
+UTextureCube* UBlendkitViewportLibrary::ImportHdriCubemap(const FString& Filename, const FString& PackageName)
+{
+	if (!FPackageName::IsValidLongPackageName(PackageName) || !PackageName.StartsWith(TEXT("/Game/")))
+	{
+		UE_LOG(LogTemp, Error, TEXT("Blendkit: invalid HDRI package path: %s"), *PackageName);
+		return nullptr;
+	}
+	FImage Image;
+	if (!FImageUtils::LoadImage(*Filename, Image))
+	{
+		UE_LOG(LogTemp, Error, TEXT("Blendkit: could not decode HDR/EXR image: %s"), *Filename);
+		return nullptr;
+	}
+	if (Image.NumSlices != 1 || Image.SizeX != 2 * Image.SizeY || Image.SizeY <= 0)
+	{
+		UE_LOG(LogTemp, Error, TEXT("Blendkit: expected a 2:1 equirectangular 360 image: %s"), *Filename);
+		return nullptr;
+	}
+	Image.ChangeFormat(ERawImageFormat::RGBA16F, EGammaSpace::Linear);
+	UPackage* Package = CreatePackage(*PackageName);
+	const FName AssetName(*FPackageName::GetLongPackageAssetName(PackageName));
+	if (FindObject<UObject>(Package, *AssetName.ToString()))
+	{
+		UE_LOG(LogTemp, Error, TEXT("Blendkit: HDRI asset already exists: %s"), *PackageName);
+		return nullptr;
+	}
+	UTextureCube* Texture = NewObject<UTextureCube>(Package, AssetName, RF_Public | RF_Standalone | RF_Transactional);
+	// One source slice is Unreal's long-lat representation, not a six-face source image.
+	Texture->Source.Init(Image.SizeX, Image.SizeY, 1, 1, TSF_RGBA16F, Image.RawData.GetData());
+	Texture->SRGB = false;
+	Texture->CompressionSettings = TC_HDR;
+	Texture->AssetImportData->Update(Filename);
+	Texture->PostEditChange();
+	FAssetRegistryModule::AssetCreated(Texture);
+	Texture->MarkPackageDirty();
+	return Texture;
 }

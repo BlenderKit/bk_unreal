@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 
+import pytest
 from bk_unreal.core import client_lib, global_vars
 
 
@@ -87,3 +88,35 @@ def test_prefs_block_includes_unreal_software_name() -> None:
     prefs = client_lib._prefs_block()
     assert prefs["software"] == "Unreal"
     assert prefs["addon_module_name"] == "bk_unreal"
+
+
+@pytest.mark.parametrize(
+    ("resolution", "expected"),
+    [
+        ("512", "resolution_0_5K"),
+        ("2048", "resolution_2K"),
+        ("resolution_4K", "resolution_4K"),
+        ("ORIGINAL", "ORIGINAL"),
+    ],
+)
+def test_download_url_uses_shared_client_resolution_tokens(monkeypatch, resolution, expected) -> None:
+    captured = {}
+
+    def fake_request(method, url, body=None, **kwargs):
+        captured.update(body)
+        return {"can_download": True, "download_url": "https://example.test/sky.exr", "filename": "sky.exr"}
+
+    monkeypatch.setattr(client_lib, "ensure_running", lambda: "62485")
+    monkeypatch.setattr(client_lib, "_effective_api_key", lambda: "")
+    monkeypatch.setattr(client_lib, "_http_request", fake_request)
+    asset = {
+        "id": "sky",
+        "assetType": "hdr",
+        "files": [{"fileType": "blend", "downloadUrl": "https://example.test/file"}],
+    }
+    client_lib.get_download_url(asset, resolution)
+
+    assert captured["resolution"] == expected
+    assert captured["asset_data"]["resolution"] == expected
+    assert captured["PREFS"]["resolution"] == expected
+    assert captured["asset_data"]["assetType"] == "hdr"

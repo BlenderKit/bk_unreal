@@ -360,7 +360,7 @@ class DragSession:
             return
 
         log.info(
-            "Drop: asset=%s at %s (floor=%s) - starting model download/import pipeline.",
+            "Drop: asset=%s at %s (floor=%s) - starting asset download/import pipeline.",
             state.asset_data.get("name", "?"),
             state.location,
             state.hit_floor,
@@ -383,7 +383,7 @@ class DragSession:
             _active_state.downloading = False
             _active_state.active = False
             self.cancel()
-            log.exception("Unhandled model import pipeline start failed: %s", exc)
+            log.exception("Unhandled asset import pipeline start failed: %s", exc)
 
     def _on_download_progress(self, progress: float, status: str) -> None:
         _active_state.download_progress = max(0.0, min(1.0, float(progress)))

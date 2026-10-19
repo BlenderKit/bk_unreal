@@ -40,6 +40,14 @@ It is built on:
   PySide6, or Shiboken dependency. The C++ module is tested locally on UE 5.8.
 - The shared Go **`blendkit-client`** for search, auth, thumbnails and
   downloads (embedded as the `bk_client` git submodule).
+- **360 HDRI environments:** drag an HDRI into the level to download its
+  equirectangular `.hdr` or `.exr` image into the global `hdrs` cache and create
+  a Sky Light. No Blender or USD conversion is needed. Unreal stores the
+  environment as a long-lat `TextureCube` under `/Game/Blendkit/HDRIs`; the
+  original remains a 360 image, not six cube-face images. This supplies ambient
+  lighting and reflections, not a visible sky backdrop, and leaves existing
+  lights unchanged. Save the level to retain the new Sky Light. Rebuild the
+  native module after updating to obtain the HDR/EXR importer.
 - Vendored `requests` / `packaging` and their dependencies under
   [Content/Python/bk_unreal/lib](Content/Python/bk_unreal/lib) (git-ignored,
   populated by `python dev.py vendor`).
@@ -174,6 +182,15 @@ export BK_TEST_UPROJECT_TARGET="MyGameEditor"
 
 Close the editor before running the build task (Live Coding locks the module);
 for a quick in-editor hot-reload use **Ctrl+Alt+F11** instead.
+
+The **Launch test project** configurations run without a native debugger and
+stream Unreal logs to the integrated terminal. On Windows these commands use
+PowerShell. Use **Debug test project (Windows, C++)** (or its **skip build**
+variant) only when you need native breakpoints. Native debugging can leave
+Unreal suspended during shutdown after its window closes, delaying the end of
+the VS Code debug session. If this happens, use VS Code's **Stop** button after
+saving your work; this terminates the debugged process rather than completing
+a graceful shutdown.
 
 > The build task passes `-NoUBA`. Because the plugin is junctioned/symlinked
 > into the project, Unreal Build Accelerator writes object files to the real
