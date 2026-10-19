@@ -3,8 +3,132 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
-from bk_unreal.core import download, prefs
+import pytest
+from bk_unreal.core import client_lib, download, editor_thread, prefs
+
+
+def _hdri_controller():
+    return download.DownloadController(
+        asset_data={"assetBaseId": "sky-base", "id": "sky-version", "slug": "sunny-sky", "assetType": "hdr"},
+        drop_location=(0.0, 0.0, 0.0),
+        drop_normal=(0.0, 0.0, 1.0),
+        drop_rotation_z=30.0,
+    )
+
+
+@pytest.mark.parametrize("extension", [".hdr", ".exr"])
+def test_hdri_download_keeps_image_format_and_resolution_cache(tmp_path, monkeypatch, extension) -> None:
+    monkeypatch.setattr(prefs.prefs, "global_dir_resolved", lambda: str(tmp_path))
+    monkeypatch.setattr(prefs.prefs, "resolution", "2048")
+    calls = []
+    monkeypatch.setattr(
+        client_lib,
+        "get_download_url",
+        lambda *args: {"can_download": True, "download_url": f"https://example.test/sky{extension}?signature=123"},
+    )
+
+    def fake_download(url, path):
+        calls.append(path)
+        Path(path).write_bytes(b"image-data")
+        return True
+
+    monkeypatch.setattr(client_lib, "blocking_file_download", fake_download)
+    controller = _hdri_controller()
+    image_path = controller._download_hdri()
+    assert Path(image_path).is_relative_to(tmp_path / "hdrs")
+    assert Path(image_path).suffix == extension
+    assert "2K" in Path(image_path).stem
+    assert controller._download_hdri() == image_path
+    assert len(calls) == 1
+
+    monkeypatch.setattr(prefs.prefs, "resolution", "4096")
+    assert _hdri_controller()._download_hdri() != image_path
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"can_download": False, "download_url": "https://example.test/sky.exr"},
+        {"can_download": True, "download_url": ""},
+        {"can_download": True, "download_url": "https://example.test/sky.blend"},
+    ],
+)
+def test_hdri_rejects_denied_missing_or_non_image_downloads(tmp_path, monkeypatch, result) -> None:
+    monkeypatch.setattr(prefs.prefs, "global_dir_resolved", lambda: str(tmp_path))
+    monkeypatch.setattr(client_lib, "get_download_url", lambda *args: result)
+    monkeypatch.setattr(client_lib, "blocking_file_download", lambda *args: pytest.fail("Must not download"))
+    with pytest.raises(RuntimeError):
+        _hdri_controller()._download_hdri()
+
+
+def test_hdri_pipeline_skips_model_export_and_dispatches_import(tmp_path, monkeypatch) -> None:
+    from bk_unreal.core import hdri_import
+
+    monkeypatch.setattr(prefs.prefs, "global_dir_resolved", lambda: str(tmp_path))
+    controller = _hdri_controller()
+    image_path = str(tmp_path / "sky.exr")
+    monkeypatch.setattr(controller, "_download_hdri", lambda: image_path)
+    monkeypatch.setattr(controller, "_download_model", lambda: pytest.fail("HDRIs are not models"))
+    monkeypatch.setattr(controller, "_export_model", lambda: pytest.fail("HDRIs must not launch Blender"))
+    calls = []
+
+    def dispatch(callback):
+        calls.append("editor-thread")
+        callback()
+
+    monkeypatch.setattr(editor_thread, "run_on_editor_thread", dispatch)
+    monkeypatch.setattr(hdri_import, "import_hdri", lambda path, **kwargs: calls.append((path, kwargs)))
+    controller._run()
+    assert controller.finished
+    assert controller.error is None
+    assert calls == ["editor-thread", (image_path, {"rotation_z": 30.0})]
+
+
+@pytest.mark.parametrize("failure", ["client", "empty", "interrupted"])
+def test_failed_hdri_download_is_not_cached(tmp_path, monkeypatch, failure) -> None:
+    monkeypatch.setattr(prefs.prefs, "global_dir_resolved", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        client_lib,
+        "get_download_url",
+        lambda *args: {"can_download": True, "download_url": "https://example.test/sky.exr"},
+    )
+
+    def fake_download(url, path):
+        if failure == "interrupted":
+            Path(path).write_bytes(b"partial")
+            raise RuntimeError("Download interrupted")
+        if failure == "empty":
+            Path(path).touch()
+        return failure != "client"
+
+    monkeypatch.setattr(client_lib, "blocking_file_download", fake_download)
+    with pytest.raises(RuntimeError):
+        _hdri_controller()._download_hdri()
+    assert not list((tmp_path / "hdrs").rglob("*.exr"))
+    assert not list((tmp_path / "hdrs").rglob("*.part"))
+
+
+def test_hdri_import_failure_reaches_finished_callback(tmp_path, monkeypatch) -> None:
+    from bk_unreal.core import hdri_import
+
+    monkeypatch.setattr(prefs.prefs, "global_dir_resolved", lambda: str(tmp_path))
+    controller = _hdri_controller()
+    monkeypatch.setattr(controller, "_download_hdri", lambda: str(tmp_path / "sky.exr"))
+    monkeypatch.setattr(editor_thread, "run_on_editor_thread", lambda callback: callback())
+
+    def fail_import(*args, **kwargs):
+        raise RuntimeError("HDRI decode failed")
+
+    monkeypatch.setattr(hdri_import, "import_hdri", fail_import)
+    finished = []
+    controller._finished_callback = lambda success, status: finished.append((success, status))
+    controller._run()
+    assert controller.finished
+    assert controller.error == "HDRI decode failed"
+    assert finished == [(False, "Failed")]
 
 
 def test_resolution_token_matches_blendkit() -> None:

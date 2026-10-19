@@ -1,4 +1,4 @@
-"""Download and Blender export pipeline for drag-to-place models.
+"""Download and import pipelines for drag-to-place models and 360 HDRIs.
 
 This module is the Unreal-side orchestration layer for the model import flow:
 
@@ -6,6 +6,9 @@ This module is the Unreal-side orchestration layer for the model import flow:
 2. download it into the per-asset cache under the Blendkit global dir,
 3. launch a headless Blender export recipe that produces a .usda stage,
 4. import the resulting USD into Unreal at the drop position.
+
+HDRIs download a single equirectangular .hdr/.exr image into ``hdrs`` and
+create environment lighting directly, without Blender or USD.
 
 The implementation intentionally stays engine-agnostic and Qt-free, so the unit
 suite can cover the path-generation and stdout parsing logic without Unreal.
@@ -21,6 +24,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from . import blender_runner, prefs
 
@@ -119,7 +123,7 @@ def parse_stdout_lines(lines: list[str]) -> dict[str, Any]:
 
 
 class DownloadController:
-    """Controller that handles a single model start-to-import job."""
+    """Controller that handles a single asset start-to-import job."""
 
     def __init__(
         self,
@@ -138,7 +142,9 @@ class DownloadController:
         self.drop_rotation_z = drop_rotation_z
         self.drop_pivot_offset = drop_pivot_offset
         self.asset_id = str(asset_data.get("assetBaseId") or asset_data.get("id") or "")
-        self.model_dir = model_cache_dir(asset_data, prefs.prefs.resolution)
+        self.is_hdri = str(asset_data.get("assetType") or "").lower() in ("hdr", "hdri")
+        self.resolution = str(prefs.prefs.resolution)
+        self.model_dir = "" if self.is_hdri else model_cache_dir(asset_data, self.resolution)
         self.started = False
         self.finished = False
         self.error: str | None = None
@@ -163,7 +169,7 @@ class DownloadController:
             log.debug("Download finished callback failed: %s", exc)
 
     def start(self) -> None:
-        """Begin the model download/export/import sequence asynchronously."""
+        """Begin the asset download/import sequence asynchronously."""
         if self.started:
             return
         self.started = True
@@ -174,18 +180,23 @@ class DownloadController:
         """Worker entry point for the async pipeline."""
         try:
             self._notify_progress(0.0, "Starting")
-            self._download_model()
-            usd_path = self._export_model()
-            from . import usd_import
+            if self.is_hdri:
+                from . import hdri_import as importer
 
+                import_path = self._download_hdri()
+            else:
+                from . import usd_import as importer
+
+                self._download_model()
+                import_path = self._export_model()
             self._notify_progress(0.98, "Importing")
-            self._import_on_editor_thread(usd_path, usd_import)
+            self._import_on_editor_thread(import_path, importer)
             self._notify_progress(1.0, "Imported")
             self._notify_finished(True, "Imported")
         except Exception as exc:  # pragma: no cover - guard for editor runtime
             self.error = str(exc)
             self._notify_finished(False, "Failed")
-            log.exception("Model import pipeline failed: %s", exc)
+            log.exception("Asset import pipeline failed: %s", exc)
         self.finished = True
 
     def _import_on_editor_thread(self, usd_path: str, usd_import: Any) -> None:
@@ -197,13 +208,16 @@ class DownloadController:
 
         def _import() -> None:
             try:
-                usd_import.import_stage(
-                    usd_path,
-                    location=self.drop_location,
-                    normal=self.drop_normal,
-                    rotation_z=self.drop_rotation_z,
-                    pivot_offset=self.drop_pivot_offset,
-                )
+                if self.is_hdri:
+                    usd_import.import_hdri(usd_path, rotation_z=self.drop_rotation_z)
+                else:
+                    usd_import.import_stage(
+                        usd_path,
+                        location=self.drop_location,
+                        normal=self.drop_normal,
+                        rotation_z=self.drop_rotation_z,
+                        pivot_offset=self.drop_pivot_offset,
+                    )
             except BaseException as exc:
                 failure.append(exc)
             finally:
@@ -211,9 +225,54 @@ class DownloadController:
 
         editor_thread.run_on_editor_thread(_import)
         if not completed.wait(60.0):
-            raise TimeoutError("Timed out waiting for the Unreal USD stage import.")
+            raise TimeoutError("Timed out waiting for the Unreal asset import.")
         if failure:
             raise failure[0]
+
+    def _download_hdri(self) -> str:
+        """Download the selected 360 image via the shared Go client, preserving its format."""
+        from . import client_lib
+
+        if not self.asset_id:
+            raise RuntimeError("HDRI is missing an asset id.")
+        slug = _slugify(str(self.asset_data.get("slug") or self.asset_data.get("name") or self.asset_id))
+        asset_id = _slugify(str(self.asset_data.get("id") or self.asset_id))
+        directory = os.path.join(prefs.prefs.global_dir_resolved(), "hdrs", f"{slug}_{asset_id}")
+        stem = f"{slug}_{resolution_token(self.resolution)}"
+        for extension in (".hdr", ".exr"):
+            cached = os.path.join(directory, stem + extension)
+            if os.path.isfile(cached) and os.path.getsize(cached) > 0:
+                self._notify_progress(0.95, "Using cached HDRI")
+                return cached
+
+        result = client_lib.get_download_url(self.asset_data, self.resolution)
+        url = str(result.get("download_url") or "")
+        if result.get("can_download") is False or not url:
+            raise RuntimeError(f"No permitted HDRI download URL for asset {self.asset_id}.")
+        extension = ""
+        for source in (str(result.get("filename") or ""), url):
+            candidate = os.path.splitext(unquote(urlparse(source).path))[1].lower()
+            if candidate in (".hdr", ".hdri", ".exr"):
+                extension = ".hdr" if candidate == ".hdri" else candidate
+                break
+        if not extension:
+            raise RuntimeError("Expected a 360 HDRI image (.hdr or .exr) from the Blendkit client.")
+
+        os.makedirs(directory, exist_ok=True)
+        destination = os.path.join(directory, stem + extension)
+        partial = destination + ".part"
+        self._notify_progress(0.05, "Downloading HDRI")
+        try:
+            if not client_lib.blocking_file_download(url, partial):
+                raise RuntimeError("The Blendkit client failed to download the HDRI.")
+            if not os.path.isfile(partial) or os.path.getsize(partial) == 0:
+                raise RuntimeError("The Blendkit client produced an empty HDRI download.")
+            os.replace(partial, destination)
+        finally:
+            if os.path.isfile(partial):
+                os.remove(partial)
+        self._notify_progress(0.95, "Downloaded HDRI")
+        return destination
 
     def _download_model(self) -> None:
         """Resolve a model URL, download it into the cache, and ensure it is a .blend."""

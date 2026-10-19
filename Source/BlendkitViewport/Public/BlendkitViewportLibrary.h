@@ -13,12 +13,18 @@
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "BlendkitViewportLibrary.generated.h"
 
+class UTextureCube;
+
 UCLASS()
 class UBlendkitViewportLibrary : public UBlueprintFunctionLibrary
 {
 	GENERATED_BODY()
 
 public:
+	/** Import a 2:1 equirectangular HDR/EXR image as a long-lat environment texture. */
+	UFUNCTION(BlueprintCallable, Category = "Blendkit|Import")
+	static UTextureCube* ImportHdriCubemap(const FString& Filename, const FString& PackageName);
+
 	/** Fills bValid + RayStart/RayEnd from the mouse position over the active
 	 * level editor viewport, in world space. bValid is false if there is no
 	 * active/hovered level viewport (e.g. focus is elsewhere).
