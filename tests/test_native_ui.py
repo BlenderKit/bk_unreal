@@ -232,3 +232,36 @@ def test_make_item_extracts_metadata(monkeypatch):
     assert item.download_count == "1500"
     assert "furniture" in item.tags
     assert item.description == "A very comfortable armchair."
+
+
+def test_native_search_preserves_order_for_pagination(monkeypatch):
+    """Forward native ordering and retain it across cursor pages."""
+    from bk_unreal.ui_native import asset_bar_native
+
+    bridge = SimpleNamespace(search_order="-quality", set_status=lambda text: None)
+    queries = []
+    for name in ("_asset_type", "_search_text", "_search_order", "_next_url", "_loading", "_active_generation"):
+        monkeypatch.setattr(asset_bar_native, name, getattr(asset_bar_native, name))
+    monkeypatch.setattr(asset_bar_native, "_assets", {})
+    monkeypatch.setattr(asset_bar_native, "_bridge", lambda: bridge)
+    monkeypatch.setattr(asset_bar_native.client_lib, "clear_thumbnail_cache", lambda: None)
+    monkeypatch.setattr(asset_bar_native, "_run_query", lambda query, **kwargs: queries.append(query))
+
+    asset_bar_native._on_search("wood", "material")
+    assert queries[-1]["order"] == "-quality"
+    assert queries[-1]["query"] == "wood"
+    assert queries[-1]["asset_type"] == "material"
+    assert asset_bar_native._next_url == ""
+    generation = asset_bar_native._active_generation
+
+    asset_bar_native._loading = False
+    asset_bar_native._next_url = "https://example.com/next"
+    asset_bar_native._on_load_more()
+    assert queries[-1]["order"] == "-quality"
+    assert queries[-1]["next"] == "https://example.com/next"
+
+    bridge.search_order = ""
+    asset_bar_native._on_search("wood", "material")
+    assert queries[-1]["order"] == ""
+    assert "next" not in queries[-1]
+    assert asset_bar_native._active_generation == generation + 1

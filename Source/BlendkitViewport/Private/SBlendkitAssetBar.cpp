@@ -590,6 +590,31 @@ void SBlendkitAssetBar::Construct(const FArguments& InArgs)
 		MakeShared<FString>(TEXT("printable")),
 	};
 	CurrentType = AssetTypes[0];
+	SearchOrders = {
+		MakeShared<FSearchOrder>(TEXT(""), LOCTEXT("OrderDefault", "Default")),
+		MakeShared<FSearchOrder>(TEXT("-created"), LOCTEXT("OrderNewest", "Newest")),
+		MakeShared<FSearchOrder>(TEXT("created"), LOCTEXT("OrderOldest", "Oldest")),
+		MakeShared<FSearchOrder>(TEXT("-bookmarks"), LOCTEXT("OrderMostBookmarks", "Bookmarks: High to Low")),
+		MakeShared<FSearchOrder>(TEXT("bookmarks"), LOCTEXT("OrderLeastBookmarks", "Bookmarks: Low to High")),
+		MakeShared<FSearchOrder>(TEXT("-score"), LOCTEXT("OrderHighestScore", "Score: High to Low")),
+		MakeShared<FSearchOrder>(TEXT("score"), LOCTEXT("OrderLowestScore", "Score: Low to High")),
+		MakeShared<FSearchOrder>(TEXT("-working_hours"), LOCTEXT("OrderMostComplex", "Complexity: High to Low")),
+		MakeShared<FSearchOrder>(TEXT("working_hours"), LOCTEXT("OrderLeastComplex", "Complexity: Low to High")),
+		MakeShared<FSearchOrder>(TEXT("-quality"), LOCTEXT("OrderHighestQuality", "Quality: High to Low")),
+		MakeShared<FSearchOrder>(TEXT("quality"), LOCTEXT("OrderLowestQuality", "Quality: Low to High")),
+	};
+	CurrentOrder = SearchOrders[0];
+	if (UBlendkitBridge* Bridge = UBlendkitBridge::Get())
+	{
+		for (const TSharedPtr<FSearchOrder>& Order : SearchOrders)
+		{
+			if (Order->Key == Bridge->SearchOrder)
+			{
+				CurrentOrder = Order;
+				break;
+			}
+		}
+	}
 
 	ChildSlot
 	[
@@ -636,6 +661,50 @@ void SBlendkitAssetBar::Construct(const FArguments& InArgs)
 				.HintText(LOCTEXT("SearchHint", "Search Blendkit…"))
 				.OnTextCommitted(this, &SBlendkitAssetBar::OnSearchCommitted)
 				.OnSearchGlassClicked_Lambda([this]() { TriggerSearch(); return FReply::Handled(); })
+			]
+		]
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(4.f, 0.f, 4.f, 4.f)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			.Padding(2.f, 0.f, 8.f, 0.f)
+			[
+				SNew(STextBlock)
+				.Text(LOCTEXT("OrderLabel", "Order"))
+			]
+			+ SHorizontalBox::Slot()
+			.FillWidth(1.f)
+			.MaxWidth(210.f)
+			[
+				SNew(SComboBox<TSharedPtr<FSearchOrder>>)
+				.OptionsSource(&SearchOrders)
+				.InitiallySelectedItem(CurrentOrder)
+				.ToolTipText(LOCTEXT("OrderTip", "Search result order"))
+				.OnGenerateWidget_Lambda([](TSharedPtr<FSearchOrder> Order)
+				{
+					return SNew(STextBlock).Text(Order->Value);
+				})
+				.OnSelectionChanged_Lambda([this](TSharedPtr<FSearchOrder> Order, ESelectInfo::Type)
+				{
+					if (Order.IsValid() && Order != CurrentOrder)
+					{
+						CurrentOrder = Order;
+						if (TileView.IsValid())
+						{
+							TileView->ScrollToTop();
+						}
+						TriggerSearch();
+					}
+				})
+				[
+					SNew(STextBlock)
+					.Text_Lambda([this]() { return CurrentOrder->Value; })
+					.Clipping(EWidgetClipping::ClipToBounds)
+				]
 			]
 		]
 		// Status line.
@@ -819,6 +888,7 @@ void SBlendkitAssetBar::TriggerSearch()
 	{
 		const FString Query = SearchBox.IsValid() ? SearchBox->GetText().ToString() : FString();
 		const FString Type = CurrentType.IsValid() ? *CurrentType : FString(TEXT("model"));
+		Bridge->SearchOrder = CurrentOrder.IsValid() ? CurrentOrder->Key : FString();
 		Bridge->OnSearchRequested.Broadcast(Query, Type);
 	}
 }

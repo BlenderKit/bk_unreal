@@ -58,6 +58,9 @@ private:
 
 	TArray<TSharedPtr<FString>> AssetTypes;
 	TSharedPtr<FString> CurrentType;
+	using FSearchOrder = TPair<FString, FText>;
+	TArray<TSharedPtr<FSearchOrder>> SearchOrders;
+	TSharedPtr<FSearchOrder> CurrentOrder;
 
 	TArray<TSharedPtr<FBlendkitTileItem>> Items;
 	TSharedPtr<STileView<TSharedPtr<FBlendkitTileItem>>> TileView;

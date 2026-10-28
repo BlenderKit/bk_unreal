@@ -34,6 +34,7 @@ _tempdir = ""
 _assets: dict[str, dict[str, Any]] = {}
 _asset_type = "model"
 _search_text = ""
+_search_order = ""
 _next_url = ""
 _loading = False
 _active_generation = 0
@@ -219,7 +220,7 @@ def _run_query(query: dict[str, Any], *, replace: bool, failed_msg: str) -> None
 
 def _on_search(query_text: str, asset_type: str) -> None:
     """Slate requested a search (already on the game thread)."""
-    global _asset_type, _search_text, _next_url, _loading, _active_generation
+    global _asset_type, _search_text, _search_order, _next_url, _loading, _active_generation
     _active_generation += 1
     _asset_type = asset_type or "model"
     _search_text = query_text or ""
@@ -229,10 +230,11 @@ def _on_search(query_text: str, asset_type: str) -> None:
     client_lib.clear_thumbnail_cache()
 
     bridge = _bridge()
+    _search_order = getattr(bridge, "search_order", "") or ""
     if bridge is not None:
         bridge.set_status("Searching…")
 
-    query = bk_search.build_query(asset_type=_asset_type, search_text=_search_text)
+    query = bk_search.build_query(asset_type=_asset_type, search_text=_search_text, extra={"order": _search_order})
     _run_query(
         query,
         replace=True,
@@ -246,7 +248,7 @@ def _on_load_more() -> None:
     if _loading or not _next_url:
         return
     _loading = True
-    query = bk_search.build_query(asset_type=_asset_type, search_text=_search_text)
+    query = bk_search.build_query(asset_type=_asset_type, search_text=_search_text, extra={"order": _search_order})
     query["next"] = _next_url
     _run_query(query, replace=False, failed_msg="")
 
