@@ -178,6 +178,9 @@ public:
 	void SetStatus(const FString& Text);
 
 	// Slate -> Python (Python binds via add_callable).
+	UPROPERTY(BlueprintReadWrite, Category = "Blendkit")
+	FString SearchOrder;
+
 	UPROPERTY(BlueprintAssignable, Category = "Blendkit")
 	FBlendkitSearchRequested OnSearchRequested;
 

@@ -29,8 +29,12 @@ def test_prepare_proxor_payload_uses_own_bounds_and_arrow() -> None:
 
     assert payload["bbox_min"] == pytest.approx((-1.0, -3.0, 0.0))
     assert payload["bbox_max"] == pytest.approx((1.0, 3.0, 4.0))
-    assert payload["mesh"] == pytest.approx([(-1.0, -3.0, 0.0), (1.0, 3.0, 4.0), (1.0, -3.0, 0.0)])
-    assert [p for seg in payload["arrow"] for p in seg] == pytest.approx([(-1.0, 3.0, 0.0), (0.0, 4.0, 0.0)])
+    expected_mesh = [(-1.0, -3.0, 0.0), (1.0, 3.0, 4.0), (1.0, -3.0, 0.0)]
+    for point, expected in zip(payload["mesh"], expected_mesh, strict=True):
+        assert point == pytest.approx(expected)
+    arrow_points = [point for segment in payload["arrow"] for point in segment]
+    for point, expected in zip(arrow_points, [(-1.0, 3.0, 0.0), (0.0, 4.0, 0.0)], strict=True):
+        assert point == pytest.approx(expected)
 
 
 @pytest.mark.parametrize("normal", [(0, 0, 1), (0, 1, 1), (1, 0, 0), (0, -1, 0), (0, 0, -1), (0.000001, 0, -1)])
