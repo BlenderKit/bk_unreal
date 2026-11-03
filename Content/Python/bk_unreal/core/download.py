@@ -74,6 +74,7 @@ def build_export_args(blend_path: str, output_dir: str, resolution: str) -> dict
         "out_usd": out_path,
         "max_resolution": str(resolution or prefs.prefs.resolution),
         "export_mtlx": True,
+        "normal_map_target": "directx",
     }
 
 
@@ -340,6 +341,7 @@ class DownloadController:
             out_usd=out_path,
             max_resolution=str(args["max_resolution"]),
             export_mtlx=True,
+            normal_map_target=str(args["normal_map_target"]),
             asset_data=self.asset_data,
         )
         task_id = resp.get("task_id")

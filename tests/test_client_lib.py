@@ -5,7 +5,42 @@ from __future__ import annotations
 import os
 
 import pytest
+from bk_unreal import _version
 from bk_unreal.core import client_lib, global_vars
+
+
+@pytest.mark.parametrize(
+    ("display_version", "api_version"),
+    [
+        ("0.1.dev", "0.1"),
+        ("0.1", "0.1"),
+        ("0.1.2611031733", "0.1.2611031733"),
+        ("0.1.2611031733-alpha", "0.1.2611031733"),
+    ],
+)
+def test_addon_version_uses_api_compatible_numeric_format(monkeypatch, display_version, api_version) -> None:
+    monkeypatch.setattr(_version, "get_version", lambda: display_version)
+
+    assert client_lib.get_addon_version() == api_version
+    assert _version.get_version() == display_version
+
+
+def test_asset_search_sends_numeric_dev_version(monkeypatch, tmp_path) -> None:
+    captured = {}
+
+    def fake_request(method, url, body=None, **kwargs):
+        captured.update(body or {})
+        return {"task_id": "search-1"}
+
+    monkeypatch.setattr(_version, "get_version", lambda: "0.1.dev")
+    monkeypatch.setattr(client_lib, "ensure_running", lambda: "62485")
+    monkeypatch.setattr(client_lib, "_effective_api_key", lambda: "")
+    monkeypatch.setattr(client_lib, "_http_request", fake_request)
+    monkeypatch.setattr(client_lib, "register_task_callback", lambda *args: None)
+    monkeypatch.setattr(client_lib, "_start_poller", lambda: None)
+
+    assert client_lib.asset_search({"asset_type": "model"}, str(tmp_path), lambda task: None) == "search-1"
+    assert captured["addon_version"] == "0.1"
 
 
 def test_api_version_is_minor() -> None:

@@ -216,6 +216,12 @@ Enable **Blendkit**, **Python Editor Script Plugin**, **Editor Scripting Utiliti
 and **USD Importer** for model imports. Configure Blender 5.0 or newer in
 **Blendkit ▸ Settings**. Blender is external and is not included in the ZIP.
 
+Unreal model exports convert tangent-space normal maps from Blender's OpenGL
+convention to DirectX by inverting the green channel in the MaterialX graph.
+The source texture files are not modified. This assumes the Blender material's
+normal maps use OpenGL; source convention is not stored per texture, so an
+already-DirectX map may need to be corrected in its source material.
+
 ## The `bk_client` and `bk_proxor` submodules
 
 Two Blendkit repos are embedded as git submodules, matching `bk_maya`:

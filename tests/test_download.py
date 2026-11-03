@@ -165,6 +165,7 @@ def test_build_export_args_uses_usd_output() -> None:
     assert os.path.basename(args["out_usd"]) == "chair_99.usd"
     assert args["max_resolution"] == "1024"
     assert args["export_mtlx"] is True
+    assert args["normal_map_target"] == "directx"
 
 
 def test_stage_has_self_sublayer_detects_broken_wrapper(tmp_path) -> None:

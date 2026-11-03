@@ -48,6 +48,14 @@ def get_version() -> str:
     return f"{BASE_VERSION}.dev"
 
 
+def get_api_version() -> str:
+    """Numeric X.Y or X.Y.Z version accepted by the Blendkit API.
+
+    Keep release-channel labels in the display version, not API metadata.
+    """
+    return get_version().partition("-")[0].removesuffix(".dev")
+
+
 def get_channel() -> str:
     """Release channel: ``stable``, ``alpha`` or ``dev`` (unbuilt checkout)."""
     info = _load_build_info()
