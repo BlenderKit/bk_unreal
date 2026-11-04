@@ -16,6 +16,9 @@ def test_import_stage_matches_preview_yaw_and_identity_scale(tmp_path, monkeypat
     spawned = {}
 
     class Actor:
+        def set_render_context(self, context: str) -> None:
+            spawned["render_context"] = context
+
         def set_root_layer(self, path: str) -> None:
             spawned["root_layer"] = path
 
@@ -45,6 +48,7 @@ def test_import_stage_matches_preview_yaw_and_identity_scale(tmp_path, monkeypat
 
     assert isinstance(actor, Actor)
     assert spawned["root_layer"] == str(stage_path)
+    assert spawned["render_context"] == "mtlx"
     assert spawned["location"] == (10.0, 20.0, 30.0)
     assert spawned["rotator"] == (0.0, 0.0, 225.0)
     assert spawned["scale"] == (1.0, 1.0, 1.0)
@@ -57,6 +61,9 @@ def test_import_stage_aligns_surface_and_keeps_pivot_on_hit(tmp_path, monkeypatc
     spawned = {}
 
     class Actor:
+        def set_render_context(self, context: str) -> None:
+            pass
+
         def set_root_layer(self, path: str) -> None:
             pass
 

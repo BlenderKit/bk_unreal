@@ -99,6 +99,7 @@ def import_stage(
     if actor is None:
         raise RuntimeError("Unreal failed to spawn a UsdStageActor.")
 
+    actor.set_render_context("mtlx")
     if hasattr(actor, "set_root_layer"):
         actor.set_root_layer(usda_path)
     else:

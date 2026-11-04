@@ -124,11 +124,77 @@ def test_hdri_import_failure_reaches_finished_callback(tmp_path, monkeypatch) ->
 
     monkeypatch.setattr(hdri_import, "import_hdri", fail_import)
     finished = []
+    dialogs = []
     controller._finished_callback = lambda success, status: finished.append((success, status))
+    monkeypatch.setattr(download, "show_failure_dialog", lambda name, reason: dialogs.append(reason))
     controller._run()
     assert controller.finished
     assert controller.error == "HDRI decode failed"
     assert finished == [(False, "Failed")]
+    assert dialogs == ["HDRI decode failed"]
+
+
+def test_slow_editor_import_is_not_abandoned(tmp_path, monkeypatch) -> None:
+    import threading
+    import time
+
+    from bk_unreal.core import hdri_import
+
+    monkeypatch.setattr(download, "EDITOR_PICKUP_TIMEOUT", 0.05)
+    imported = []
+
+    def dispatch(callback):
+        # Like the real editor tick: runs later, on another thread.
+        threading.Thread(target=callback).start()
+
+    def slow_import(path, **kwargs):
+        time.sleep(0.3)
+        imported.append(path)
+
+    monkeypatch.setattr(editor_thread, "run_on_editor_thread", dispatch)
+    monkeypatch.setattr(hdri_import, "import_hdri", slow_import)
+    _hdri_controller()._import_on_editor_thread("sky.exr", hdri_import)
+    assert imported == ["sky.exr"]
+
+
+def test_editor_never_starting_import_times_out(monkeypatch) -> None:
+    from bk_unreal.core import hdri_import
+
+    monkeypatch.setattr(download, "EDITOR_PICKUP_TIMEOUT", 0.05)
+    monkeypatch.setattr(editor_thread, "run_on_editor_thread", lambda callback: None)
+    with pytest.raises(TimeoutError, match="start the asset import"):
+        _hdri_controller()._import_on_editor_thread("sky.exr", hdri_import)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "blender exited with error: exit status 1: [blender] Read blend: x.blend\n"
+            "[blender] ERROR Unable to pack file\n"
+            "[blender] BK_ERROR export failed: Required Unreal MaterialX export failed: boom\n"
+            "[blender] Traceback (most recent call last):\n"
+            '[blender]   File "export_usd.py", line 1, in main\n'
+            "[blender] RuntimeError: boom",
+            "export failed: Required Unreal MaterialX export failed: boom",
+        ),
+        (
+            "blender exited with error: exit status 1: [blender] Traceback (most recent call last):\n"
+            "[blender] ValueError: bad value\n[blender] Blender quit",
+            "ValueError: bad value",
+        ),
+        ("Timed out waiting for the Unreal asset import.", "Timed out waiting for the Unreal asset import."),
+        ("", "Unknown error"),
+    ],
+)
+def test_failure_reason(text, expected) -> None:
+    assert download.failure_reason(text) == expected
+
+
+def test_failure_reason_is_truncated() -> None:
+    reason = download.failure_reason("BK_ERROR " + "x" * 1000)
+    assert len(reason) <= 400
+    assert reason.endswith("...")
 
 
 def test_resolution_token_matches_blendkit() -> None:
@@ -162,9 +228,10 @@ def test_build_export_args_uses_usd_output() -> None:
     args = download.build_export_args(blend_path, out_dir, "1024")
     assert os.path.abspath(args["blend_path"]) == blend_path
     assert args["out_usd"].endswith(".usd")
-    assert os.path.basename(args["out_usd"]) == "chair_99.usd"
+    assert os.path.basename(args["out_usd"]) == "chair_99_unreal.usd"
     assert args["max_resolution"] == "1024"
     assert args["export_mtlx"] is True
+    assert args["normal_map_target"] == "unreal"
 
 
 def test_stage_has_self_sublayer_detects_broken_wrapper(tmp_path) -> None:
@@ -197,3 +264,32 @@ def test_parse_stdout_prefers_done_over_error() -> None:
 def test_parse_stdout_still_captures_error() -> None:
     parsed = download.parse_stdout_lines(["BK_ERROR export failed"])
     assert parsed["error"] == "export failed"
+
+
+@pytest.mark.parametrize(
+    ("task", "previous", "expected_fraction", "expected_message"),
+    [
+        ({"progress": 10, "message": "Launching Blender"}, 0.4, 0.41, "Launching Blender"),
+        ({"progress": 56, "message": "Exporting materials 2/4"}, 0.41, 0.686, "Exporting materials 2/4"),
+        # Older clients keep progress at 10% but forward recipe lines in message_detailed.
+        (
+            {"progress": 10, "message": "Running script", "message_detailed": "[blender] BK_PROGRESS 0.5 Unpacking"},
+            0.41,
+            0.35 + 0.555 * 0.6,
+            "Unpacking",
+        ),
+        ({"progress": 5, "message": "late"}, 0.7, 0.7, "late"),
+        ({"progress": None, "message_detailed": "[blender] BK_PROGRESS bad"}, 0.4, 0.4, ""),
+    ],
+)
+def test_export_task_progress(task, previous, expected_fraction, expected_message) -> None:
+    fraction, message = download.export_task_progress(task, previous)
+    assert fraction == pytest.approx(expected_fraction)
+    assert message == expected_message
+
+
+@pytest.mark.parametrize(
+    ("elapsed", "expected"), [(0.0, "Loading .blend"), (1.9, "Loading .blend"), (12.7, "Loading .blend (12s)")]
+)
+def test_export_phase_label(elapsed, expected) -> None:
+    assert download.export_phase_label("Loading .blend", elapsed) == expected

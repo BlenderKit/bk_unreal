@@ -65,17 +65,14 @@ CLIENT_PORTS: tuple[str, ...] = (
 
 
 def get_addon_version() -> str:
-    """Return the plugin's own version string from _version."""
-    try:
-        from .. import _version
+    """Return the API-compatible numeric plugin version from _version."""
+    from .. import _version
 
-        return _version.get_version()
-    except Exception:
-        return "0.1.dev"
+    return _version.get_api_version()
 
 
 ADDON_VERSION = get_addon_version()
-"""Plugin version reported to the Go client, sourced from _version.py."""
+"""Numeric plugin version reported to the Go client, sourced from _version.py."""
 
 SOFTWARE_NAME = "Unreal"
 
