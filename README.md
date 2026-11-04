@@ -216,11 +216,38 @@ Enable **Blendkit**, **Python Editor Script Plugin**, **Editor Scripting Utiliti
 and **USD Importer** for model imports. Configure Blender 5.0 or newer in
 **Blendkit ▸ Settings**. Blender is external and is not included in the ZIP.
 
-Unreal model exports convert tangent-space normal maps from Blender's OpenGL
-convention to DirectX by inverting the green channel in the MaterialX graph.
-The source texture files are not modified. This assumes the Blender material's
-normal maps use OpenGL; source convention is not stored per texture, so an
-already-DirectX map may need to be corrected in its source material.
+### Normal maps
+
+Model imports explicitly select USD's `mtlx` render context, preserving the
+MaterialX normal/bump chain rather than using the simpler Preview Surface
+fallback. Exports use `normal_map_target: "unreal"`: Unreal automatically samples
+normal textures as signed vectors, so the export adapts those samples back to
+encoded values for any existing source-graph arithmetic, then decodes once into
+signed DirectX tangent-space normals. Source textures are not modified.
+
+The USD stores `blendkit:normal:*` custom data on normal shaders and textures:
+`sourceConvention`, `inputConvention`, `outputConvention`, and `decoding` where
+applicable. Blender Normal Map inputs expect OpenGL. The original texture
+convention is `unknown` unless explicitly declared on the Blender image with
+`image["blendkit_normal_convention"] = "opengl"` or `"directx"`; pixels and file
+names are not used to guess it. This declaration records provenance and does not
+add another flip to a source graph that may already compensate the texture.
+
+The universal USD Preview Surface fallback records its own native
+`UsdUVTexture.inputs:scale`, `inputs:bias`, and `inputs:sourceColorSpace = "raw"`.
+Existing decode values (including a negative green scale) are preserved.
+Metadata alone does not change rendering. Other USD/MaterialX consumers should
+export with `normal_map_target: "preserve"`; the `"unreal"` graph intentionally
+adapts Unreal's importer, not the standard MaterialX normalmap implementation.
+Unreal exports use a separate `_unreal.usd` cache name so older cached exports
+are not reused. Material names ending in numbers gain a `_Material` suffix to
+avoid Unreal's MaterialX cache stripping their numeric suffix. Existing normal
+and bump inputs are combined with a normalized whiteout blend because Unreal's
+standard bump expansion discards the incoming base normal.
+
+After changing the bundled export recipe, rebuild the client with
+`python dev.py client` and restart both the client and the editor, then re-import
+the model. Restarting only the editor may reuse an older running client.
 
 ## The `bk_client` and `bk_proxor` submodules
 

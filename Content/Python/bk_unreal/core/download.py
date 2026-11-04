@@ -16,6 +16,7 @@ suite can cover the path-generation and stdout parsing logic without Unreal.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import re
@@ -68,13 +69,13 @@ def build_export_args(blend_path: str, output_dir: str, resolution: str) -> dict
     blend_file = os.path.abspath(str(blend_path))
     out_dir = os.path.abspath(str(output_dir))
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, f"{Path(blend_file).stem}.usd")
+    out_path = os.path.join(out_dir, f"{Path(blend_file).stem}_unreal.usd")
     return {
         "blend_path": blend_file,
         "out_usd": out_path,
         "max_resolution": str(resolution or prefs.prefs.resolution),
         "export_mtlx": True,
-        "normal_map_target": "directx",
+        "normal_map_target": "unreal",
     }
 
 
@@ -121,6 +122,108 @@ def parse_stdout_lines(lines: list[str]) -> dict[str, Any]:
     if not parsed["done_path"] and parsed["error"]:
         parsed["done_path"] = ""
     return parsed
+
+
+# Mirrors bk_client's run_blender_script.go: recipe progress 0..1 maps onto task progress 12..99.
+_RECIPE_TASK_PROGRESS_START = 12.0
+_RECIPE_TASK_PROGRESS_END = 99.0
+# Export task progress 0..100 occupies this slice of the whole download/import bar.
+_EXPORT_FRACTION_START = 0.35
+_EXPORT_FRACTION_SPAN = 0.6
+
+
+def export_task_progress(task: dict[str, Any], previous: float) -> tuple[float, str]:
+    """Map a ``run_blender_script`` task report to an overall (fraction, message).
+
+    Older clients report only "Launching Blender" (10%), so ``BK_PROGRESS``
+    recipe lines in ``message_detailed`` are parsed as well. Never decreases.
+
+    Args:
+        task: the client's task report.
+        previous: the overall fraction already shown.
+
+    Returns:
+        The new overall fraction and the task's status message ("" if none).
+    """
+    task_progress = 0.0
+    with contextlib.suppress(TypeError, ValueError):
+        task_progress = float(task.get("progress") or 0.0)
+    message = str(task.get("message") or "")
+    detail = str(task.get("message_detailed") or "").strip()
+    if detail.startswith("[blender] "):
+        detail = detail[len("[blender] ") :]
+    if detail.startswith("BK_PROGRESS "):
+        parts = detail.split(maxsplit=2)
+        with contextlib.suppress(IndexError, ValueError):
+            recipe = max(0.0, min(1.0, float(parts[1])))
+            span = _RECIPE_TASK_PROGRESS_END - _RECIPE_TASK_PROGRESS_START
+            task_progress = max(task_progress, _RECIPE_TASK_PROGRESS_START + recipe * span)
+            if len(parts) > 2:
+                message = parts[2]
+    fraction = _EXPORT_FRACTION_START + max(0.0, min(1.0, task_progress / 100.0)) * _EXPORT_FRACTION_SPAN
+    return max(previous, fraction), message
+
+
+def export_phase_label(message: str, elapsed: float) -> str:
+    """Append seconds spent in the current phase so long single steps still visibly advance."""
+    seconds = int(elapsed)
+    return f"{message} ({seconds}s)" if seconds >= 2 else message
+
+
+_FAILURE_REASON_LIMIT = 400
+# Seconds the worker waits for the editor tick to start the queued import (not the import itself).
+EDITOR_PICKUP_TIMEOUT = 120.0
+
+
+def failure_reason(text: str) -> str:
+    """Pick the most useful one-line reason out of a pipeline failure message.
+
+    Prefers the recipe's last ``BK_ERROR`` line, then the last Python exception
+    line, then the first line of ``text``. ``[blender]`` prefixes are dropped.
+
+    Args:
+        text: the raw exception text (may include the whole Blender stdout).
+
+    Returns:
+        A short human-readable reason.
+    """
+    lines = []
+    for raw in str(text or "").splitlines():
+        line = raw.strip()
+        if line.startswith("[blender]"):
+            line = line[len("[blender]") :].strip()
+        if line:
+            lines.append(line)
+    reason = ""
+    for line in reversed(lines):
+        if line.startswith("BK_ERROR "):
+            reason = line[len("BK_ERROR ") :].strip()
+            break
+    if not reason:
+        for line in reversed(lines):
+            head = line.split(":", 1)[0]
+            if ":" in line and head.isidentifier() and head.endswith(("Error", "Exception")):
+                reason = line
+                break
+    if not reason and lines:
+        reason = lines[0]
+    reason = reason or "Unknown error"
+    if len(reason) > _FAILURE_REASON_LIMIT:
+        reason = reason[: _FAILURE_REASON_LIMIT - 3].rstrip() + "..."
+    return reason
+
+
+def show_failure_dialog(asset_name: str, reason: str) -> None:
+    """Show a modal editor dialog explaining why an asset import failed (editor thread only)."""
+    try:
+        import unreal
+    except ImportError:
+        return
+    message = f"Blendkit could not import '{asset_name}'.\n\nReason: {reason}\n\nSee the Output Log for full details."
+    try:
+        unreal.EditorDialog.show_message("Blendkit import failed", message, unreal.AppMsgType.OK)
+    except Exception as exc:
+        log.warning("Could not show import failure dialog: %s", exc)
 
 
 class DownloadController:
@@ -196,18 +299,32 @@ class DownloadController:
             self._notify_finished(True, "Imported")
         except Exception as exc:  # pragma: no cover - guard for editor runtime
             self.error = str(exc)
+            reason = failure_reason(self.error)
             self._notify_finished(False, "Failed")
             log.exception("Asset import pipeline failed: %s", exc)
+            log.error("Asset import failed: %s", reason)
+            self._report_failure(reason)
         self.finished = True
+
+    def _report_failure(self, reason: str) -> None:
+        from . import editor_thread
+
+        asset_name = str(self.asset_data.get("name") or self.asset_data.get("displayName") or self.asset_id)
+        try:
+            editor_thread.run_on_editor_thread(lambda: show_failure_dialog(asset_name, reason))
+        except Exception as exc:
+            log.debug("Could not queue import failure dialog: %s", exc)
 
     def _import_on_editor_thread(self, usd_path: str, usd_import: Any) -> None:
         """Queue Unreal actor creation onto the editor thread and await it."""
         from . import editor_thread
 
+        started = threading.Event()
         completed = threading.Event()
         failure: list[BaseException] = []
 
         def _import() -> None:
+            started.set()
             try:
                 if self.is_hdri:
                     usd_import.import_hdri(usd_path, rotation_z=self.drop_rotation_z)
@@ -225,8 +342,12 @@ class DownloadController:
                 completed.set()
 
         editor_thread.run_on_editor_thread(_import)
-        if not completed.wait(60.0):
-            raise TimeoutError("Timed out waiting for the Unreal asset import.")
+        # Only bound the wait for the editor to pick the job up. Once running, the import blocks the
+        # editor thread itself (Nanite builds of multi-million-triangle meshes take minutes), so a
+        # deadline there would only abandon an import that is about to succeed.
+        if not started.wait(EDITOR_PICKUP_TIMEOUT):
+            raise TimeoutError("Timed out waiting for the Unreal editor to start the asset import.")
+        completed.wait()
         if failure:
             raise failure[0]
 
@@ -322,14 +443,13 @@ class DownloadController:
             os.remove(out_usda)
         completed = threading.Event()
         task_state: dict[str, Any] = {}
+        export_state = {"fraction": 0.4, "message": "Exporting"}
 
         def _on_task(task: dict[str, Any]) -> None:
             task_state.update(task)
-            progress = task.get("progress")
-            if progress is not None:
-                self._notify_progress(
-                    0.35 + max(0.0, min(1.0, float(progress) / 100.0)) * 0.6, task.get("message") or "Exporting"
-                )
+            fraction, message = export_task_progress(task, export_state["fraction"])
+            export_state["fraction"] = fraction
+            export_state["message"] = message or export_state["message"]
             if task.get("status") in ("finished", "error"):
                 completed.set()
 
@@ -349,12 +469,19 @@ class DownloadController:
             raise RuntimeError(f"Client rejected the Blender export request: {resp!r}")
         client_lib.register_task_callback(str(task_id), _on_task)
         log.info("Blender export task accepted: %s", task_id)
-        self._notify_progress(0.4, "Exporting")
+        self._notify_progress(export_state["fraction"], export_state["message"])
 
         deadline = time.monotonic() + 900.0
+        phase_message = ""
+        phase_started = time.monotonic()
         while not completed.wait(0.5):
-            if time.monotonic() >= deadline:
+            now = time.monotonic()
+            if now >= deadline:
                 raise TimeoutError(f"Blender export task timed out: {task_id}")
+            message = export_state["message"]
+            if message != phase_message:
+                phase_message, phase_started = message, now
+            self._notify_progress(export_state["fraction"], export_phase_label(message, now - phase_started))
         if task_state.get("status") == "error":
             message = task_state.get("message") or "Blender export failed"
             detail = task_state.get("message_detailed") or ""
